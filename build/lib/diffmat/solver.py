@@ -2,7 +2,7 @@ import numpy as np
 import jax
 from jax import numpy as jnp
 
-from diffmat.utilities import voigt_to_tensor, tensor_to_voigt
+from jaxmaterials.user_yc.utilities import voigt_to_tensor, tensor_to_voigt
 from jaxmaterials.solver.lippmann_schwinger import lippmann_schwinger
 
 

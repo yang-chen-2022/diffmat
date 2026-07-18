@@ -8,8 +8,8 @@ import jax
 from jax import numpy as jnp
 
 
-from src.solver import elastodamage_phasefield_solve
-from src.utils_compvoxel import (
+from diffmat.solver import elastodamage_phasefield_solve
+from diffmat.utils_compvoxel import (
     fibre,
     grid_spec,
     fibre_association,
@@ -18,7 +18,7 @@ from src.utils_compvoxel import (
     voxel_clipping,
 )
 
-from src.helper import save_arrays_to_vti
+from diffmat.helper import save_arrays_to_vti
 
 
 
