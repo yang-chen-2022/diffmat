@@ -8,5 +8,6 @@
 *.vtk
 *.synctex.gz
 *.pvd
+**/build/
 **/egg-info/
 **/__pycache__/

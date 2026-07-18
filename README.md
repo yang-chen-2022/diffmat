@@ -22,9 +22,56 @@ This makes the framework suitable for gradient-based methods such as:
 
 ---
 
+## Installation
+
+### 1. Set up a virtual environment
+
+We recommend using conda to create an isolated environment:
+
+```bash
+conda create -n diffmat python=3.12
+conda activate diffmat
+```
+
+### 2. Install JAX
+
+Install JAX with CUDA 12 support (adjust for your setup if needed):
+
+```bash
+pip install -U "jax[cuda12]"
+```
+
+### 3. Install JaxMaterials
+
+Clone and install JaxMaterials, which is a dependency of diffmat:
+
+```bash
+git clone git@github.com:eikehmueller/JaxMaterials.git
+cd JaxMaterials/
+pip install .
+```
+
+If you plan to modify JaxMaterials as part of your development, use the editable install instead:
+
+```bash
+pip install -e .
+```
+
+### 4. Install diffmat
+
+Clone and install diffmat in editable mode for development:
+
+```bash
+git clone https://github.com/yang-chen-2022/diffmat.git
+cd diffmat/
+pip install -e .
+```
+
+---
+
 ## Background and Acknowledgements
 
-The initial development of `diffmat` builds upon and is inspired by **Eike Müller’s** work:
+The initial development of `diffmat` builds upon and is inspired by **Eike Müller's** work:
 
 - **JaxMaterials** by Eike Müller  
   <https://github.com/eikehmueller/JaxMaterials>
