@@ -3,7 +3,7 @@
 **Differentiable Materials Modelling**
 
 `diffmat` is a research-oriented Python codebase for **differentiable materials modelling**.  
-It uses an **FFT-based numerical method** to solve constitutive material models implemented with **JAX**, enabling **end-to-end differentiability** of material responses.
+It uses an **[JAX](https://docs.jax.dev/en/latest/index.html#) based FFT numerical solver [JaxMaterials](https://github.com/eikehmueller/JaxMaterials#)**, enabling end-to-end differentiability of material responses.
 
 This makes the framework suitable for gradient-based methods such as:
 - Inverse material parameter identification
