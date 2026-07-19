@@ -11,4 +11,6 @@ src/diffmat.egg-info/SOURCES.txt
 src/diffmat.egg-info/dependency_links.txt
 src/diffmat.egg-info/requires.txt
 src/diffmat.egg-info/top_level.txt
+test/test_grad.py
 test/test_pfm.py
+test/test_to.py
