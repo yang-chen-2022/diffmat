@@ -3,7 +3,7 @@
 **Differentiable Materials Modelling**
 
 `diffmat` is a research-oriented Python codebase for **differentiable materials modelling**.  
-It uses an **[JAX](https://docs.jax.dev/en/latest/index.html#) based FFT numerical solver [JaxMaterials](https://github.com/eikehmueller/JaxMaterials#)**, enabling end-to-end differentiability of material responses.
+It uses an **[JAX](https://docs.jax.dev/en/latest/index.html#) based FFT numerical solver [JaxMaterials](https://github.com/eikehmueller/JaxMaterials#)**, enabling end-to-end differentiability of material response.
 
 This makes the framework suitable for gradient-based methods such as:
 - Inverse material parameter identification
@@ -66,6 +66,23 @@ git clone https://github.com/yang-chen-2022/diffmat.git
 cd diffmat/
 pip install -e .
 ```
+
+---
+
+## Test Cases
+
+### Phase-Field Fracture Model (`test/test_pfm.py`)
+
+This test demonstrates a phase-field fracture simulation applied to a composite material with reinforcing fibres. The simulation:
+
+1. **Geometry Setup**: Creates a 3D computational grid with an embedded cylindrical fibre aligned along the z-axis
+2. **Material Association**: Assigns each voxel to either the fibre or matrix phase based on proximity
+3. **Material Properties**: Defines elastic (λ, μ) and fracture parameters (G_c, ℓ_c) for each phase
+4. **Loading**: Applies monotonic uniaxial strain in the x-direction over 10 load steps
+5. **Solver**: Runs the elastodamage phase-field solver with staggered iterations for elastic equilibrium and damage evolution
+6. **Output**: Generates stress-strain curves and saves strain, stress, and damage fields in VTK format
+
+This example illustrates the framework's capability for simulating complex damage and fracture phenomena in heterogeneous materials.
 
 ---
 
