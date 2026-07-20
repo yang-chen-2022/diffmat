@@ -3,7 +3,7 @@
 **Differentiable Materials Modelling**
 
 `diffmat` is a research-oriented Python codebase for **differentiable materials modelling**.  
-It uses an **[JAX](https://docs.jax.dev/en/latest/index.html#) based FFT numerical solver [JaxMaterials](https://github.com/eikehmueller/JaxMaterials#)**, enabling end-to-end differentiability of material response.
+It uses an **[JAX](https://docs.jax.dev/en/latest/index.html#) based FFT numerical solver [JaxMaterials](https://github.com/eikehmueller/JaxMaterials#)**, enabling end-to-end differentiability of materials modelling.
 
 This makes the framework suitable for gradient-based methods such as:
 - Inverse material parameter identification
@@ -73,16 +73,17 @@ pip install -e .
 
 ### Phase-Field Fracture Model (`test/test_pfm.py`)
 
-This test demonstrates a phase-field fracture simulation applied to a composite material with reinforcing fibres. The simulation:
+This test demonstrates a phase-field fracture simulation applied to a composite material with particle inclusions. The simulation:
 
-1. **Geometry Setup**: Creates a 3D computational grid with an embedded cylindrical fibre aligned along the z-axis
-2. **Material Association**: Assigns each voxel to either the fibre or matrix phase based on proximity
+1. **Geometry Setup**: Creates a 3D computational grid with randomly distributed spherical particles
+2. **Material Association**: Assigns each voxel to either a particle inclusion or matrix phase based on proximity
 3. **Material Properties**: Defines elastic (λ, μ) and fracture parameters (G_c, ℓ_c) for each phase
 4. **Loading**: Applies monotonic uniaxial strain in the x-direction over 10 load steps
 5. **Solver**: Runs the elastodamage phase-field solver with staggered iterations for elastic equilibrium and damage evolution
 6. **Output**: Generates stress-strain curves and saves strain, stress, and damage fields in VTK format
+7. **Differentiation**: Tests automatic differentiation for inverse parameter identification (under development)
 
-This example illustrates the framework's capability for simulating complex damage and fracture phenomena in heterogeneous materials.
+This example illustrates the framework's capability for simulating complex damage and fracture phenomena in heterogeneous materials, as well as demonstrating JAX-based automatic differentiation through the full simulation pipeline.
 
 ---
 
