@@ -85,6 +85,24 @@ This test demonstrates a phase-field fracture simulation applied to a composite 
 
 This example illustrates the framework's capability for simulating complex damage and fracture phenomena in heterogeneous materials, as well as demonstrating JAX-based automatic differentiation through the full simulation pipeline.
 
+### Topology Optimisation (`test/test_to.py`)
+
+This test demonstrates gradient-based topology optimization using differentiable FFT solvers. It combines density-based topology optimization with automatic differentiation to design optimal material layouts for specified mechanical properties:
+
+1. **Domain Setup**: Creates a 2D rectangular domain (discretized as 99×99×1)
+2. **Material Parameterization**: Uses SIMP (Solid Isotropic Material Penalization) model to interpolate material properties from density
+3. **Compliance Computation**: Solves linear elasticity via Lippmann-Schwinger FFT solver with automatic differentiation
+4. **Sensitivity Filtering**: Applies spatial filtering to sensitivities to prevent checkerboard patterns
+5. **Optimality Criteria Update**: Iteratively updates density field using OC algorithm with volume constraint
+6. **Visualization**: Plots convergence, optimized topology, and resulting strain/stress fields
+
+This example showcases the powerful integration of:
+- JAX's automatic differentiation through complex FFT-based solvers
+- Gradient-based optimization for inverse design problems
+- Real-time performance monitoring and visualization
+
+**Reference**: Inspired by Mohit Pundir & David S. Kammer (2025), *Computer Methods in Applied Mechanics and Engineering*, 435, 117572.
+
 ---
 
 ## Background and Acknowledgements
