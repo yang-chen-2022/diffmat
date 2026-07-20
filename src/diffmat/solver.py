@@ -257,6 +257,8 @@ def elastodamage_phasefield_solve(
             E_mean,
             ref_params = {"lambda":lmbda0, "mu":mu0},
             grid_spec=grid,
+            tol=1.0e-5,
+            maxits=maxiter_Elas,
             verbose=1, 
             depth=4,
         )
@@ -264,10 +266,10 @@ def elastodamage_phasefield_solve(
         jax.block_until_ready(epsilon)
 
         #  Save & display
-        sigAV  = np.array([np.mean(sigma[i]) for i in range(6)])
+        sigAV  = jnp.array([jnp.mean(sigma[i]) for i in range(6)])
         sig_steps.append(sigAV)
 
-        epsAV = np.array([np.mean(epsilon[i]) for i in range(6)])
+        epsAV = jnp.array([jnp.mean(epsilon[i]) for i in range(6)])
         eps_steps.append(epsAV)
 
         # update the history field

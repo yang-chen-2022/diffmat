@@ -11,51 +11,53 @@ material with reinforcing fibres. It:
 
 import numpy as np
 from matplotlib import pyplot as plt
+import jax
 from jax import numpy as jnp
 import pyvista as pv
 
+from diffmat.utilities import grid_spec, voxelise_particles_periodic
 from diffmat.solver import elastodamage_phasefield_solve
-from diffmat.utils_compvoxel import fibre, grid_spec, fibre_association
+from diffmat.rvegen import generate_particles_periodic
 from diffmat.helper import save_arrays_to_vti
 
+import time
 
 # ============================================================================
-# Setup: Grid and Fibre Geometry
+# Setup: Grid and RVE Geometry
 # ============================================================================
 
 # Create a 3D computational grid
-# Parameters: domain_size, nx, ny, nz, dx, dy, dz
-grid = grid_spec(1.0, 2, 3, 0.03, 0.03, 0.03)
+box_size = [2., 2., 2.]
+spacing = [0.05, 0.05, 0.05]
+grid = grid_spec(box_size[0], box_size[1], box_size[1], spacing[0], spacing[1], spacing[2])
 
-# Define a single reinforcing fibre
-# Parameters: reference points, fibre direction vectors, fibre radii
-fibres = fibre(
-    [[0.2, 0.5, 0.5]],      # Reference point on fibre
-    [[0.0, 0.0, 1.0]],      # Fibre direction (z-axis)
-    [0.3]                   # Fibre radius
+# Random particle distribution
+np.random.seed(42)
+n_particles = 20
+radius_range = [0.1, 0.3]
+t0 = time.time()
+positions, radii = generate_particles_periodic(
+    n_particles,
+    box_size,
+    radius_range,
 )
+print(f'  gerenate_random_particles took {time.time()-t0} s')
 
-# ============================================================================
-# Material Association: Assign voxels to fibre or matrix
-# ============================================================================
-
-centers = np.array(grid.build_centers())
-x0 = np.array(fibres.x0)
-v = np.array(fibres.v)
-r = np.array(fibres.r)
-h_vec = np.array([grid.dx, grid.dy, grid.dz])
-
-# Associate each voxel with the nearest fibre (or matrix if outside all fibres)
-all_in, all_out, composite, idx_closest = fibre_association(
-    centers, h_vec, x0, v, r
+# Material Association: Assign voxels to particle or matrix
+t0 = time.time()
+matID = voxelise_particles_periodic(
+    grid,
+    positions,
+    radii,
 )
-matID = np.where(all_out, 0, idx_closest + 1)
-matID = matID.reshape((grid.nx, grid.ny, grid.nz))
+print(np.unique(matID))
+#matID = matID > 1
+print(f'  create matID took {time.time()-t0} s')
 
 # Visualize the material distribution
 mesh = pv.ImageData()
 mesh.dimensions = np.array(matID.shape) + 1
-mesh.spacing = h_vec
+mesh.spacing = spacing
 mesh.origin = (0, 0, 0)
 mesh.cell_data["value"] = matID.flatten(order="F")
 mesh.plot(volume=True, opacity=0.1)
@@ -65,70 +67,48 @@ mesh.plot(volume=True, opacity=0.1)
 # Material Properties for Phase-Field Fracture Model
 # ============================================================================
 
-def initialise_materials_phasefield(
-    grid, matID, lmbda, mu, gc, lc, dtype=np.float32
-):
-    """
-    Initialize material property grids for phase-field fracture simulation.
+def init_material(lmbda_list, mu_list, gc_list, lc_list):
+    dtype = jnp.float32
+    lmbda_grid = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=dtype)
+    mu_grid = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=dtype)
+    gc_grid = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=dtype)
+    lc_grid = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=dtype)
     
-    Args:
-        grid: Computational grid specification
-        matID: Material ID map for each voxel
-        lmbda: Lame parameter (list, one per material)
-        mu: Shear modulus (list, one per material)
-        gc: Critical energy release rate (list, one per material)
-        lc: Characteristic length scale (list, one per material)
-        dtype: Data type for arrays
-        
-    Returns:
-        Tuple of (lmbda_grid, mu_grid, gc_grid, lc_grid)
-    """
-    lmbda_grid = np.zeros((grid.nx, grid.ny, grid.nz), dtype=dtype)
-    mu_grid = np.zeros((grid.nx, grid.ny, grid.nz), dtype=dtype)
-    gc_grid = np.zeros((grid.nx, grid.ny, grid.nz), dtype=dtype)
-    lc_grid = np.zeros((grid.nx, grid.ny, grid.nz), dtype=dtype)
-    
-    num_mats = len(lmbda)
+    num_mats = len(lmbda_list)
     matids = np.unique(matID)
     
-    if num_mats != len(matids):
-        raise ValueError(
-            "Number of material property entries must match the number "
-            "of unique material IDs in the material map."
-        )
-    
     for i in range(num_mats):
-        lmbda_grid[matID == matids[i]] = lmbda[i]
-        mu_grid[matID == matids[i]] = mu[i]
-        gc_grid[matID == matids[i]] = gc[i]
-        lc_grid[matID == matids[i]] = lc[i]
+        lmbda_grid = lmbda_grid.at[matID == matids[i]].set(lmbda_list[i])
+        mu_grid = mu_grid.at[matID == matids[i]].set(mu_list[i])
+        gc_grid = gc_grid.at[matID == matids[i]].set(gc_list[i])
+        lc_grid = lc_grid.at[matID == matids[i]].set(lc_list[i])
     
-    return jnp.array(lmbda_grid), jnp.array(mu_grid), gc_grid, lc_grid
+    return lmbda_grid, mu_grid, gc_grid, lc_grid
 
 
 # Define material properties: [matrix, fibre]
-lmbda_list = [121.15, 0.0]      # Lame parameter
-mu_list = [80.77, 0.0]          # Shear modulus
-gc_list = [2.7e-3, 5e-3]        # Critical energy release rate
-lc_list = [0.015, 0.015]        # Characteristic length
+lmbda_list = [10., 100.]      # Lame parameter
+mu_list = [8., 80.]          # Shear modulus
+gc_list = [2.e-3, 1.e-3]        # Critical energy release rate
 
-lmbda, mu, gc, lc = initialise_materials_phasefield(
-    grid, matID, lmbda_list, mu_list, gc_list, lc_list, np.float32
-)
+lc_particle = jnp.array(0.08)
+lc_list = [0.08, lc_particle]        # Characteristic length
 
+lmbda_grid, mu_grid, gc_grid, lc_grid = init_material(lmbda_list, mu_list, gc_list, lc_list)
 
 # ============================================================================
 # Loading and Solver Setup
 # ============================================================================
 
 # Define monotonic uniaxial loading (strain in x-direction)
-Emean = 0.05
+Emean = 0.03
 nsteps = 10
 
-# Create strain history: ramp from 0 to Emean_xx over nsteps
+# Create strain history: ramp from >0 to Emean_xx over nsteps
+exx0 = Emean/nsteps/2
 Emean_steps = [
     jnp.array([eps_xx, 0.0, 0.0, 0.0, 0.0, 0.0])
-    for eps_xx in np.linspace(0, Emean, nsteps)
+    for eps_xx in np.linspace(exx0, Emean, nsteps)
 ]
 
 # Steps at which to save output fields
@@ -137,17 +117,19 @@ save_steps = [0, nsteps - 1]
 # Solve the elastodamage phase-field problem
 epsMacro, sigMacro, epsfield, sigfield, dfield = elastodamage_phasefield_solve(
     grid,
-    lmbda,
-    mu,
-    gc,
-    lc,
+    lmbda_grid,
+    mu_grid,
+    gc_grid,
+    lc_grid,
     Emean_steps,
     save_steps,
     k_stab=1e-6,
-    maxiter_PF=10000,
-    maxiter_Elas=10000,
+    maxiter_PF=1000,
+    maxiter_Elas=500,
 )
 
+print(epsMacro[:,0])
+print(sigMacro[:,0])
 
 # ============================================================================
 # Results Visualization and Output
@@ -175,7 +157,58 @@ for step in save_steps:
         filename=f"stress_strain_damage_field_{step}.vtk",
         arrays=[epsfield[step], sigfield[step], dfield[step][None, ...]],
         names=["Strain", "Stress", "Damage"],
-        spacing=h_vec,
+        spacing=spacing,
         origin=(0, 0, 0),
         stack_components=True,
     )
+
+
+
+
+# ================== #
+# Differentiation    #
+# ================== #
+
+def loss_fn(lc_particle):
+    
+    lmbda_list = [10., 100.]      # Lame parameter
+    mu_list = [8., 80.]          # Shear modulus
+    gc_list = [2.e-3, 1.e-3]        # Critical energy release rate
+
+    lc_list = [0.08, lc_particle]        # Characteristic length
+    
+    lmbda_grid, mu_grid, gc_grid, lc_grid = init_material(lmbda_list, mu_list, gc_list, lc_list)
+    
+    epsMacro, sigMacro, epsfield, sigfield, dfield = elastodamage_phasefield_solve(
+        grid,
+        lmbda_grid,
+        mu_grid,
+        gc_grid,
+        lc_grid,
+        Emean_steps,
+        save_steps,
+        k_stab=1e-6,
+        maxiter_PF=1000,
+        maxiter_Elas=500,
+    )
+    
+    epsMacro0 = jnp.array([0.0015, 0.00466667, 0.00783334, 0.01100001, 0.01416667, 0.01733333,
+                           0.02050005, 0.02366663, 0.02683346, 0.03000061])
+    sigMacro0 = jnp.array([0.04443982, 0.13747472, 0.21981922, 0.28068838, 0.31564325, 0.32615548,
+                           0.31734097, 0.29530105, 0.26511085, 0.22972433])
+
+    loss = jnp.mean( (((epsMacro0 - epsMacro[:,icomp])/max(epsMacro0))**2 + 
+                    ((sigMacro0 - sigMacro[:,icomp])/max(sigMacro0))**2)**0.5 )
+    return loss
+
+grad_fn = jax.jacrev(loss_fn, argnums=0, has_aux=False)    
+dl_dlc = grad_fn(0.08)
+print(dl_dlc)
+
+value_grad_fn = jax.value_and_grad(loss_fn, argnums=0, has_aux=False)    
+l, dl_dlc = value_grad_fn(0.08)
+print(dl_dlc)
+print(l)
+
+
+
