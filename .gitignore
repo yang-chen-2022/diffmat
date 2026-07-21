@@ -9,5 +9,5 @@
 *.synctex.gz
 *.pvd
 **/build/
-**/egg-info/
+**/*.egg-info/
 **/__pycache__/
