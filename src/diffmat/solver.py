@@ -152,13 +152,13 @@ def scalar_solve(grid, u_in, b_rhs, a, tolerance=1e-6, maxiter=1000):
     residual = jnp.array(1.0, dtype=dtype)
 
     # Execute the fixed-point iteration loop
-    u_final, _, iter_count, __ = jax.lax.while_loop(
+    u_final, *_ = jax.lax.while_loop(
         exit_condition,
         loop_body,
         init_val=(u_in, b_rhs - (a - a_ref) * u_in, 0, residual),
     )
 
-    return u_final, iter_count
+    return u_final
 
 
 # @jax.jit(static_argnames=["grid", "tolerance", "maxiter"])
@@ -178,8 +178,10 @@ def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000):
     A_n = 1.0 / (lc**2) + 2.0 * HH / (gc * lc)
     B_n = 2.0 * HH / (gc * lc)
 
-    d_final, iter_count = scalar_solve(grid, d_old, B_n, A_n, tolerance, maxiter)
+    d_final = scalar_solve(grid, d_old, B_n, A_n, tolerance, maxiter)
 
+    # temporary fix: do we really need to know the number of Lippmann-Schwinger iterations?
+    iter_count = 0
     return d_final, iter_count
 
 
