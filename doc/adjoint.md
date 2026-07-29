@@ -65,10 +65,10 @@ $$
     \int_\Omega \Lambda(z)u(z)\;dz
     -\int_\Omega\int_\Omega \Lambda(z)\mathcal{G}_0(z-y)b(y)\;dy\;dz
     +\int_\Omega \int_\Omega \Lambda(z) \mathcal{G}_0(z-y) (a(y)-a_0)u(y)\;dy\;dz
-    - \int_\Omega \int_\Omega \Lambda(z) \mathcal{G}_0(z-y)\nabla_y\left((K(y)-K_0) \nabla_y u(y)\right)\;dy\;dz\right\}\\
-    &= \Lambda(x) + (a(x) - a_0) \int_\Omega \Lambda(z)\mathcal{G}_0(z-x)\;dz- \frac{\delta}{\delta u(x)}\int_\Omega \int_\Omega u(y) \nabla_y \left((K(y)-K_0)\nabla_y\Lambda(z)\mathcal{G}_0(z-y)\right)\;dy\;dz \\
-    &= \Lambda(x) + (a(x) - a_0)\int_\Omega \Lambda(z)\mathcal{G}_0(z-x) \;dz - \int_\Omega \nabla_x\left((K(x)-K_0)\nabla_x \Lambda(z) \mathcal{G}_0 (z-x)\right)\;dz\\
-    &= \Lambda(x) + (a(x)-a_0) (\mathcal{G}_0 * \Lambda)(x) - \nabla \left((K(x)-K_0) \nabla (\mathcal{G}_0 * \Lambda)(x)\right)
+    - \int_\Omega \int_\Omega \Lambda(z) \mathcal{G}_0(z-y)\nabla_y\cdot\left(\left((K(y)-K_0) \nabla_y u(y)\right)\right)\;dy\;dz\right\}\\
+    &= \Lambda(x) + (a(x) - a_0) \int_\Omega \Lambda(z)\mathcal{G}_0(z-x)\;dz- \frac{\delta}{\delta u(x)}\int_\Omega \int_\Omega u(y) \nabla_y \cdot\left((K(y)-K_0)\nabla_y(\Lambda(z)\mathcal{G}_0(z-y))\right)\;dy\;dz \\
+    &= \Lambda(x) + (a(x) - a_0)\int_\Omega \Lambda(z)\mathcal{G}_0(z-x) \;dz - \int_\Omega \nabla_x\cdot\left((K(x)-K_0)\nabla_x \left(\Lambda(z) \mathcal{G}_0 (z-x)\right)\right)\;dz\\
+    &= \Lambda(x) + (a(x)-a_0) (\mathcal{G}_0 * \Lambda)(x) - \nabla \cdot\left((K(x)-K_0) \nabla (\mathcal{G}_0 * \Lambda)(x)\right)
 \end{aligned}
 $$
 which leads to the adjoint equation for $\Lambda$
