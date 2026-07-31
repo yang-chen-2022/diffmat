@@ -113,7 +113,15 @@ def solve_fwd(b_rhs, a, grid_spec, u_in, tolerance, maxiter, verbose):
     :arg maxiter: maximal number of iterations
     :arg verbose: verbosity level
     """
-    out = solve(b_rhs, a, grid_spec, u_in=u_in, tolerance=tolerance, maxiter=maxiter)
+    out = solve(
+        b_rhs,
+        a,
+        grid_spec,
+        u_in=u_in,
+        tolerance=tolerance,
+        maxiter=maxiter,
+        verbose=verbose,
+    )
     return out, (a, out)
 
 
@@ -128,6 +136,7 @@ def solve_bwd(grid_spec, u_in, tolerance, maxiter, verbose, res, gradients):
     :arg maxiter: maximal number of iterations
     :arg res: result of forward solve
     :arg gradients: gradient with respect to solution u
+    :arg verbose: verbosity level
     """
     (a, u) = res
     g_u = gradients

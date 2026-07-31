@@ -24,7 +24,9 @@ def grid_spec(request):
 
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
-def test_solve(grid_spec, dtype):
+def test_adjoint(grid_spec, dtype):
+    """Verify that derivative is computed correctly with adjoint method
+    For this, compare to corresponding finite difference."""
     rng = np.random.default_rng(seed=241745)
     b_rhs = rng.normal(size=(grid_spec.nx, grid_spec.ny, grid_spec.nz)).astype(dtype)
     a = np.exp(
