@@ -38,7 +38,7 @@ def test_adjoint(grid_spec, dtype):
             b_rhs,
             a,
             grid_spec,
-            tolerance=1.0e-12 if dtype == np.float64 else 1.0e-6,
+            tol=1.0e-12 if dtype == np.float64 else 1.0e-6,
             verbose=1,
         )
         return jnp.sum(u_sol**2)

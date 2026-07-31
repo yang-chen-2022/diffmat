@@ -6,9 +6,9 @@ import functools
 
 @functools.partial(
     jax.custom_vjp,
-    nondiff_argnames=("grid_spec", "u_in", "tolerance", "maxiter", "verbose"),
+    nondiff_argnames=("grid_spec", "u_in", "tol", "maxits", "verbose"),
 )
-def solve(b_rhs, a, grid_spec, u_in=None, tolerance=1e-6, maxiter=1000, verbose=0):
+def solve(b_rhs, a, grid_spec, u_in=None, tol=1e-6, maxits=1000, verbose=0):
     """Lippmann-Schwinger iteration for the scalar second order problem
 
         -Laplace u(x) + a(x)*u(x) = b_rhs(x)
@@ -17,8 +17,8 @@ def solve(b_rhs, a, grid_spec, u_in=None, tolerance=1e-6, maxiter=1000, verbose=
     :arg b_rhs: right hand side (field) (1, Nx, Ny, Nz)
     :arg a: ceofficient of zero order term (field) (1, Nx, Ny, Nz)
     :arg u_in: initial value of solution u
-    :arg tolerance: tolerance for convergence check
-    :arg maxiter: maximal number of iterations
+    :arg tol: tolerance for convergence check
+    :arg maxits: maximal number of iterations
     :arg verbose: verbosity level
     """
     dtype = b_rhs.dtype
@@ -43,14 +43,14 @@ def solve(b_rhs, a, grid_spec, u_in=None, tolerance=1e-6, maxiter=1000, verbose=
         """Check exit condition
 
         Check whether the relative difference
-           ||chi^{k+1} - chi^k||_2 / ||chi^{k+1}||_2 > tolerance or iter > maxiter
+           ||chi^{k+1} - chi^k||_2 / ||chi^{k+1}||_2 > tol or its > maxits
         """
-        iter, rel_difference = state[2:]
-        return (rel_difference > tolerance) & (iter < maxiter)
+        its, rel_difference = state[2:]
+        return (rel_difference > tol) & (its < maxits)
 
     def loop_body(state):
         """Update phase-field, polarisation field, and compute residual"""
-        chi_k, iter, rel_difference = state[1:]
+        chi_k, its, rel_difference = state[1:]
 
         # Compute new phase field with polarisation field
         u_new = jnp.real(jnp.fft.ifftn(jnp.fft.fftn(chi_k) / (a_ref - laplacian)))
@@ -64,7 +64,7 @@ def solve(b_rhs, a, grid_spec, u_in=None, tolerance=1e-6, maxiter=1000, verbose=
 
         rel_difference = jnp.where(norm_chi_new > 1e-12, norm_diff / norm_chi_new, 0.0)
 
-        return (u_new, chi_new, iter + 1, rel_difference)
+        return (u_new, chi_new, its + 1, rel_difference)
 
     # Initialising variables for the first iteration (at k=0)
 
@@ -77,14 +77,14 @@ def solve(b_rhs, a, grid_spec, u_in=None, tolerance=1e-6, maxiter=1000, verbose=
         u_0 = u_in
 
     # Execute the fixed-point iteration loop
-    u_final, _, iter, __ = jax.lax.while_loop(
+    u_final, _, its, __ = jax.lax.while_loop(
         exit_condition,
         loop_body,
         init_val=(u_0, b_rhs - (a - a_ref) * u_0, 0, residual),
     )
     if verbose > 0:
         jax.lax.cond(
-            (iter < maxiter),
+            (its < maxits),
             lambda x, y: jax.debug.print(
                 "JAX adjoint solver converged after {:6d} of {:6d} iterations",
                 x,
@@ -96,21 +96,21 @@ def solve(b_rhs, a, grid_spec, u_in=None, tolerance=1e-6, maxiter=1000, verbose=
                 x,
                 ordered=True,
             ),
-            iter,
-            maxiter,
+            its,
+            maxits,
         )
     return u_final
 
 
-def solve_fwd(b_rhs, a, grid_spec, u_in, tolerance, maxiter, verbose):
+def solve_fwd(b_rhs, a, grid_spec, u_in, tol, maxits, verbose):
     """Forward solve
 
     :arg b_rhs: right hand side (field) (1, Nx, Ny, Nz)
     :arg a: ceofficient of zero order term (field) (1, Nx, Ny, Nz)
     :arg grid_spec: specification of computational grid
     :arg u_in: initial value of solution u
-    :arg tolerance: tolerance for convergence check
-    :arg maxiter: maximal number of iterations
+    :arg tol: tolerance for convergence check
+    :arg maxits: maximal number of iterations
     :arg verbose: verbosity level
     """
     out = solve(
@@ -118,22 +118,22 @@ def solve_fwd(b_rhs, a, grid_spec, u_in, tolerance, maxiter, verbose):
         a,
         grid_spec,
         u_in=u_in,
-        tolerance=tolerance,
-        maxiter=maxiter,
+        tol=tol,
+        maxits=maxits,
         verbose=verbose,
     )
     return out, (a, out)
 
 
-def solve_bwd(grid_spec, u_in, tolerance, maxiter, verbose, res, gradients):
+def solve_bwd(grid_spec, u_in, tol, maxits, verbose, res, gradients):
     """Forward solve
 
     :arg b_rhs: right hand side (field) (1, Nx, Ny, Nz)
     :arg a: ceofficient of zero order term (field) (1, Nx, Ny, Nz)
     :arg grid_spec: specification of computational grid
     :arg u_in: initial value of solution u
-    :arg tolerance: tolerance for convergence check
-    :arg maxiter: maximal number of iterations
+    :arg tol: tolerance for convergence check
+    :arg maxits: maximal number of iterations
     :arg res: result of forward solve
     :arg gradients: gradient with respect to solution u
     :arg verbose: verbosity level
@@ -146,8 +146,8 @@ def solve_bwd(grid_spec, u_in, tolerance, maxiter, verbose, res, gradients):
         a,
         grid_spec,
         u_in=None,
-        tolerance=tolerance,
-        maxiter=maxiter,
+        tol=tol,
+        maxits=maxits,
         verbose=verbose,
     )
     g_b_rhs = -Theta
