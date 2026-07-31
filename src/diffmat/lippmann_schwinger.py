@@ -86,13 +86,13 @@ def solve(b_rhs, a, grid_spec, u_in=None, tol=1e-6, maxits=1000, verbose=0):
         jax.lax.cond(
             (its < maxits),
             lambda x, y: jax.debug.print(
-                "JAX adjoint solver converged after {:6d} of {:6d} iterations",
+                "Lippmann Schwinger solver converged after {:6d} of {:6d} iterations",
                 x,
                 y,
                 ordered=True,
             ),
             lambda x, y: jax.debug.print(
-                "JAX forward solver failed to converge after {:6d} iterations",
+                "Lippmann Schwinger solver failed to converge after {:6d} iterations",
                 x,
                 ordered=True,
             ),

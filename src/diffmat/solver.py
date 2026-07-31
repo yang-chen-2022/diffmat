@@ -107,7 +107,7 @@ def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000):
     A_n = 1.0 / (lc**2) + 2.0 * HH / (gc * lc)
     B_n = 2.0 * HH / (gc * lc)
 
-    d_final = solve(B_n, A_n, grid, d_old, tolerance, maxiter)
+    d_final = solve(B_n, A_n, grid, jax.lax.stop_gradient(d_old), tolerance, maxiter)
 
     # temporary fix: do we really need to know the number of Lippmann-Schwinger iterations?
     iter_count = 0
