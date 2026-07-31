@@ -37,7 +37,7 @@ def test_solve(grid_spec, dtype):
         )
         return jnp.sum(u_sol**2)
 
-    rtol = 1.0e-7 if dtype == np.float64 else 1.0e-3
+    rtol = 1.0e-9 if dtype == np.float64 else 1.0e-4
     check_vjp(
         loss_fn,
         functools.partial(jax.vjp, loss_fn),
