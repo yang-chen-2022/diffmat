@@ -1,9 +1,9 @@
-import numpy as np
 import jax
 from jax import numpy as jnp
 
-from diffmat.utilities import voigt_to_tensor, tensor_to_voigt
 from jaxmaterials.solver.lippmann_schwinger import lippmann_schwinger
+from diffmat.utilities import voigt_to_tensor, tensor_to_voigt
+from diffmat.lippmann_schwinger import solve
 
 
 def compute_sigma_damaged(epsilon, params):
@@ -90,77 +90,6 @@ def compute_strain_energy(lmbda, mu, epsilon):
     return psi_plus
 
 
-def scalar_solve(grid, u_in, b_rhs, a, tolerance=1e-6, maxiter=1000):
-    """Fixed-point iteration solver for scalar problem
-
-    - Laplace u(x) + a(x)*u(x) = b_rhs(x)
-
-    :arg grid: specification of computational grid
-    :arg u_in: initial value of soliution u
-    :arg b_rhs: right hand side (field) (1, Nx, Ny, Nz)
-    :arg a: ceofficient of zero order term (field) (1, Nx, Ny, Nz)
-    :arg tolerance: tolerance for convergence check
-    :arg maxiter: maximal number of iterations
-    """
-
-    dtype = u_in.dtype
-
-    # Reference parameter A_0
-    a_ref = 0.5 * (jnp.min(a) + jnp.max(a))
-
-    # Laplacian operator in Fourier space
-    n_vec = (grid.nx, grid.ny, grid.nz)
-    L_vec = (grid.Lx, grid.Ly, grid.Lz)
-    hsq = (np.asarray(L_vec) / np.asarray(n_vec)) ** 2
-    # Normalised momentum vectors in all three spatial directions
-    # Grid with normalised momentum vectors
-    xi = np.meshgrid(*[2 * np.pi * np.arange(n) / n for n in n_vec], indexing="ij")
-    # Grid with xi*xi (laplacian in Fourier space)
-    xixi = np.sum(2.0 * (np.cos(xi) - 1.0) / hsq)
-    laplacian = xixi.astype(dtype)
-
-    def exit_condition(state):
-        """Check exit condition
-
-        Check whether the relative difference
-           ||chi^{k+1} - chi^k||_2 / ||chi^{k+1}||_2 > tolerance or iter > maxiter
-        """
-        iter, rel_difference = state[2:]
-        return (rel_difference > tolerance) & (iter < maxiter)
-
-    def loop_body(state):
-        """Update phase-field, polarisation field, and compute residual"""
-        chi_k, iter, rel_difference = state[1:]
-
-        # Compute new phase field with polarisation field
-        u_new = jnp.real(jnp.fft.ifftn(jnp.fft.fftn(chi_k) / (a_ref - laplacian)))
-
-        # Update the polarisation field
-        chi_new = b_rhs - (a - a_ref) * u_new
-
-        # Convergence test based on the L-2 norm over the unit cell
-        norm_diff = jnp.linalg.norm(chi_new - chi_k)
-        norm_chi_new = jnp.linalg.norm(chi_new)
-
-        rel_difference = jnp.where(norm_chi_new > 1e-12, norm_diff / norm_chi_new, 0.0)
-
-        return (u_new, chi_new, iter + 1, rel_difference)
-
-    # Initialising variables for the first iteration (at k=0)
-
-    # Set initial residual to 1
-    residual = jnp.array(1.0, dtype=dtype)
-
-    # Execute the fixed-point iteration loop
-    u_final, *_ = jax.lax.while_loop(
-        exit_condition,
-        loop_body,
-        init_val=(u_in, b_rhs - (a - a_ref) * u_in, 0, residual),
-    )
-
-    return u_final
-
-
 # @jax.jit(static_argnames=["grid", "tolerance", "maxiter"])
 def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000):
     """Fixed-point iteration solver for phase-field problem (fracture)
@@ -178,7 +107,7 @@ def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000):
     A_n = 1.0 / (lc**2) + 2.0 * HH / (gc * lc)
     B_n = 2.0 * HH / (gc * lc)
 
-    d_final = scalar_solve(grid, d_old, B_n, A_n, tolerance, maxiter)
+    d_final = solve(B_n, A_n, grid, d_old, tolerance, maxiter)
 
     # temporary fix: do we really need to know the number of Lippmann-Schwinger iterations?
     iter_count = 0
