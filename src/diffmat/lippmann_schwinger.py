@@ -6,14 +6,9 @@ import functools
 
 @functools.partial(
     jax.custom_vjp,
-    nondiff_argnames=(
-        "grid_spec",
-        "u_in",
-        "tolerance",
-        "maxiter",
-    ),
+    nondiff_argnames=("grid_spec", "u_in", "tolerance", "maxiter", "verbose"),
 )
-def solve(b_rhs, a, grid_spec, u_in=None, tolerance=1e-6, maxiter=1000):
+def solve(b_rhs, a, grid_spec, u_in=None, tolerance=1e-6, maxiter=1000, verbose=0):
     """Lippmann-Schwinger iteration for the scalar second order problem
 
         -Laplace u(x) + a(x)*u(x) = b_rhs(x)
@@ -24,6 +19,7 @@ def solve(b_rhs, a, grid_spec, u_in=None, tolerance=1e-6, maxiter=1000):
     :arg u_in: initial value of solution u
     :arg tolerance: tolerance for convergence check
     :arg maxiter: maximal number of iterations
+    :arg verbose: verbosity level
     """
     dtype = b_rhs.dtype
 
@@ -86,20 +82,27 @@ def solve(b_rhs, a, grid_spec, u_in=None, tolerance=1e-6, maxiter=1000):
         loop_body,
         init_val=(u_0, b_rhs - (a - a_ref) * u_0, 0, residual),
     )
-    jax.lax.cond(
-        iter >= maxiter,
-        lambda x: jax.debug.print(
-            "JAX forward solver failed to converge after {:6d} iterations",
-            x,
-            ordered=True,
-        ),
-        lambda x: None,
-        maxiter,
-    )
+    if verbose > 0:
+        jax.lax.cond(
+            (iter < maxiter),
+            lambda x, y: jax.debug.print(
+                "JAX adjoint solver converged after {:6d} of {:6d} iterations",
+                x,
+                y,
+                ordered=True,
+            ),
+            lambda x, y: jax.debug.print(
+                "JAX forward solver failed to converge after {:6d} iterations",
+                x,
+                ordered=True,
+            ),
+            iter,
+            maxiter,
+        )
     return u_final
 
 
-def solve_fwd(b_rhs, a, grid_spec, u_in, tolerance, maxiter):
+def solve_fwd(b_rhs, a, grid_spec, u_in, tolerance, maxiter, verbose):
     """Forward solve
 
     :arg b_rhs: right hand side (field) (1, Nx, Ny, Nz)
@@ -108,12 +111,13 @@ def solve_fwd(b_rhs, a, grid_spec, u_in, tolerance, maxiter):
     :arg u_in: initial value of solution u
     :arg tolerance: tolerance for convergence check
     :arg maxiter: maximal number of iterations
+    :arg verbose: verbosity level
     """
     out = solve(b_rhs, a, grid_spec, u_in=u_in, tolerance=tolerance, maxiter=maxiter)
     return out, (a, out)
 
 
-def solve_bwd(grid_spec, u_in, tolerance, maxiter, res, gradients):
+def solve_bwd(grid_spec, u_in, tolerance, maxiter, verbose, res, gradients):
     """Forward solve
 
     :arg b_rhs: right hand side (field) (1, Nx, Ny, Nz)
@@ -129,7 +133,13 @@ def solve_bwd(grid_spec, u_in, tolerance, maxiter, res, gradients):
     g_u = gradients
     b_rhs_ad = -g_u
     Theta = solve(
-        b_rhs_ad, a, grid_spec, u_in=None, tolerance=tolerance, maxiter=maxiter
+        b_rhs_ad,
+        a,
+        grid_spec,
+        u_in=None,
+        tolerance=tolerance,
+        maxiter=maxiter,
+        verbose=verbose,
     )
     g_b_rhs = -Theta
     g_a = Theta * u
