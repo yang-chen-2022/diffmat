@@ -83,9 +83,11 @@ This test demonstrates a phase-field fracture simulation applied to a composite 
 6. **Output**: Generates stress-strain curves and saves strain, stress, and damage fields in VTK format
 7. **Differentiation**: Tests automatic differentiation for inverse parameter identification (under development)
 
-![Initial microstructure of randomly distributed spherical inclusions in the RVE](figures/initialGeom.png)
+![Initial microstructure of randomly distributed spherical inclusions in the RVE](examples/figures/pfm_initialgeom.png)
 
 Figure: Initial geometry (input microstructure) used in the phase-field fracture test — randomly distributed spherical inclusions in the representative volume element (RVE).
+
+RVE generation (brief): the microstructure was generated with a periodic random particle generator (see `diffmat.rvegen.generate_particles_periodic`). Typical parameters used in the example are: `box_size = [2.0, 2.0, 2.0]`, `spacing = [0.05, 0.05, 0.05]`, `n_particles = 20`, `radius_range = [0.1, 0.3]`, and `seed = 42` for reproducibility. Users can change `box_size`, `spacing`, `n_particles`, `radius_range`, and the random seed to control the particle density, size distribution, and repeatability.
 
 This example illustrates the framework's capability for simulating complex damage and fracture phenomena in heterogeneous materials, as well as demonstrating JAX-based automatic differentiation th[...]
 
