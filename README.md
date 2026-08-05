@@ -3,7 +3,7 @@
 **Differentiable Materials Modelling**
 
 `diffmat` is a research-oriented Python codebase for **differentiable materials modelling**.  
-It uses an **[JAX](https://docs.jax.dev/en/latest/index.html#) based FFT numerical solver [JaxMaterials](https://github.com/eikehmueller/JaxMaterials#)**, enabling end-to-end differentiability of materials modelling.
+It uses an **[JAX](https://docs.jax.dev/en/latest/index.html#) based FFT numerical solver [JaxMaterials](https://github.com/eikehmueller/JaxMaterials#)**, enabling end-to-end differentiability of m[...]
 
 This makes the framework suitable for gradient-based methods such as:
 - Inverse material parameter identification
@@ -83,11 +83,15 @@ This test demonstrates a phase-field fracture simulation applied to a composite 
 6. **Output**: Generates stress-strain curves and saves strain, stress, and damage fields in VTK format
 7. **Differentiation**: Tests automatic differentiation for inverse parameter identification (under development)
 
-This example illustrates the framework's capability for simulating complex damage and fracture phenomena in heterogeneous materials, as well as demonstrating JAX-based automatic differentiation through the full simulation pipeline.
+![Initial microstructure of randomly distributed spherical inclusions in the RVE](figures/initialGeom.png)
+
+Figure: Initial geometry (input microstructure) used in the phase-field fracture test — randomly distributed spherical inclusions in the representative volume element (RVE).
+
+This example illustrates the framework's capability for simulating complex damage and fracture phenomena in heterogeneous materials, as well as demonstrating JAX-based automatic differentiation th[...]
 
 ### Topology Optimisation (`test/test_to.py`)
 
-This test demonstrates gradient-based topology optimization using differentiable FFT solvers. It combines density-based topology optimization with automatic differentiation to design optimal material layouts for specified mechanical properties:
+This test demonstrates gradient-based topology optimization using differentiable FFT solvers. It combines density-based topology optimization with automatic differentiation to design optimal mater[...]
 
 1. **Domain Setup**: Creates a 2D rectangular domain (discretized as 99×99×1)
 2. **Material Parameterization**: Uses SIMP (Solid Isotropic Material Penalization) model to interpolate material properties from density
