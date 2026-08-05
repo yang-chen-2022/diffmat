@@ -6,6 +6,7 @@
 *.log
 *.out
 *.vtk
+*.vti
 *.synctex.gz
 *.pvd
 **/build/
