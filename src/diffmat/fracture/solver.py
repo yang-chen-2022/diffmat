@@ -2,8 +2,8 @@ import jax
 from jax import numpy as jnp
 
 from jaxmaterials.solver.lippmann_schwinger import lippmann_schwinger
-from diffmat.utilities import voigt_to_tensor, tensor_to_voigt
-from diffmat.lippmann_schwinger import solve
+from diffmat.fracture.utilities import voigt_to_tensor, tensor_to_voigt
+from diffmat.fracture.lippmann_schwinger import solve
 
 
 def compute_sigma_damaged(epsilon, params):
@@ -169,7 +169,7 @@ def elastodamage_phasefield_solve(
             tol=1.0e-4,
             maxits=maxiter_Elas,
             verbose=1,
-            depth=10,
+            depth=4,
         )
 
         jax.block_until_ready(epsilon)
@@ -192,3 +192,10 @@ def elastodamage_phasefield_solve(
             sigfield[step] = sigma
 
     return jnp.array(eps_steps), jnp.array(sig_steps), epsfield, sigfield, dfield
+
+
+
+
+
+
+

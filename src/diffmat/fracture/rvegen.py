@@ -1,6 +1,6 @@
 import numpy as np
 import numpy as np
-from diffmat.utilities import minimum_image
+from diffmat.fracture.utilities import minimum_image
 
 
 
