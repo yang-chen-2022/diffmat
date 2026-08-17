@@ -2,8 +2,8 @@ import jax
 from jax import numpy as jnp
 
 from jaxmaterials.solver.lippmann_schwinger import lippmann_schwinger
-from diffmat.utilities import voigt_to_tensor, tensor_to_voigt
-from diffmat.lippmann_schwinger import solve
+from diffmat.fracture.utilities import voigt_to_tensor, tensor_to_voigt
+from diffmat.fracture.lippmann_schwinger import solve
 
 
 def compute_sigma_damaged(epsilon, params):
@@ -91,7 +91,7 @@ def compute_strain_energy(lmbda, mu, epsilon):
 
 
 # @jax.jit(static_argnames=["grid", "tolerance", "maxiter"])
-def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000):
+def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000, verbose=0):
     """Fixed-point iteration solver for phase-field problem (fracture)
 
     :arg HH: history strain energy (field), (1, Nx, Ny, Nz)
@@ -107,11 +107,9 @@ def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000):
     A_n = 1.0 / (lc**2) + 2.0 * HH / (gc * lc)
     B_n = 2.0 * HH / (gc * lc)
 
-    d_final = solve(B_n, A_n, grid, jax.lax.stop_gradient(d_old), tolerance, maxiter)
+    d_final = solve(B_n, A_n, grid, jax.lax.stop_gradient(d_old), tolerance, maxiter, verbose)
 
-    # temporary fix: do we really need to know the number of Lippmann-Schwinger iterations?
-    iter_count = 0
-    return d_final, iter_count
+    return d_final
 
 
 # Staggered scheme for solving elasticity + phase-field equations
@@ -149,7 +147,7 @@ def elastodamage_phasefield_solve(
         print(f"======== Time Step {step}  ========")
 
         # solve phase-field
-        d, iter_pf = phase_field_solve(
+        d = phase_field_solve(
             HH,
             d,
             gc,
@@ -157,9 +155,9 @@ def elastodamage_phasefield_solve(
             grid,
             tolerance=1e-6,
             maxiter=maxiter_PF,
+            verbose=1,
         )
-        jax.block_until_ready(iter_pf)
-        print(f"    PF solve: {iter_pf} iterations.")
+        jax.block_until_ready(d)
 
         # solve elasticity
         epsilon, sigma = lippmann_schwinger(
@@ -168,7 +166,7 @@ def elastodamage_phasefield_solve(
             E_mean,
             ref_params={"lambda": lmbda0, "mu": mu0},
             grid_spec=grid,
-            tol=1.0e-5,
+            tol=1.0e-4,
             maxits=maxiter_Elas,
             verbose=1,
             depth=4,
@@ -194,3 +192,10 @@ def elastodamage_phasefield_solve(
             sigfield[step] = sigma
 
     return jnp.array(eps_steps), jnp.array(sig_steps), epsfield, sigfield, dfield
+
+
+
+
+
+
+

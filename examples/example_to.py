@@ -10,11 +10,6 @@ Inspired by:
   Mohit Pundir & David S. Kammer, 2025, Computer Methods in Applied Mechanics 
   and Engineering, 435, 117572
 
-Key features:
-- Density parameterization of material layout
-- Sensitivity filtering and optimality criteria (OC) updates
-- Automatic differentiation through the FFT solver
-- Real-time visualization of convergence and final topology
 """
 
 import jax
@@ -255,32 +250,6 @@ def eng2lame(E, nu):
     return lmbda, mu
 
 
-# ============================================================================
-# Setup: Domain and Material Properties
-# ============================================================================
-
-# Domain dimensions [mm]
-Lx, Ly, Lz = 0.5, 0.5, 0.5
-nx, ny, nz = 99, 99, 1
-
-grid_spec = GridSpec(nx, ny, nz, Lx, Ly, Lz)
-shape = (nx, ny, nz)
-dx, dy, dz = Lx / nx, Ly / ny, Lz / nz
-
-# Material parameters [MPa, N/mm^2]
-E0 = 1e-1  # Void/soft material
-E1 = 1.0   # Solid material
-nu = 0.3   # Poisson's ratio
-kk = 0.0   # Regularization parameter (optional)
-
-# Topology optimization parameters
-vf = 0.3         # Target volume fraction
-penalty = 5.0    # Penalization exponent (SIMP)
-ft_type = 1      # Filter type: 1=sensitivity, 2=density
-
-# Build filter kernel
-kernel = build_filter_kernel((2, 2, 0))
-
 
 # ============================================================================
 # Objective Function and Sensitivity
@@ -322,8 +291,10 @@ def fft_solve(lmbda, mu, epsilon_bar):
         epsilon_bar,
         ref_params={"lambda": lmbda0, "mu": mu0},
         grid_spec=grid_spec,
-        verbose=0,
-        depth=4,
+        tol=1.0e-4,
+        maxits=2000,
+        verbose=1,
+        depth=0,
     )
     
     return jnp.mean(sigma, axis=[1, 2, 3])
@@ -334,8 +305,11 @@ def compute_c(lmbda, mu):
     Compute macroscopic compliance (inverse stiffness).
     """
     epsilon_bars = jnp.eye(6)[:2]
-    batched_fft_solve = jax.vmap(lambda eps: fft_solve(lmbda, mu, eps))
-    Cmacro = batched_fft_solve(epsilon_bars)
+    #batched_fft_solve = jax.vmap(lambda eps: fft_solve(lmbda, mu, eps))
+    #Cmacro = batched_fft_solve(epsilon_bars)
+    C0 = fft_solve(lmbda,mu, epsilon_bars[0])
+    C1 = fft_solve(lmbda,mu, epsilon_bars[1])
+    Cmacro = jnp.vstack((C0,C1))
     
     # Bulk modulus related: -C_00 - C_11 - C_01 - C_10
     return -(Cmacro[0, 0] + Cmacro[1, 1] + Cmacro[0, 1] + Cmacro[1, 0])
@@ -446,6 +420,34 @@ def optimize(max_iter=100):
 
 
 # ============================================================================
+# Setup: Domain and Material Properties
+# ============================================================================
+
+# Domain dimensions [mm]
+Lx, Ly, Lz = 0.5, 0.5, 0.5
+nx, ny, nz = 99, 99, 1
+
+grid_spec = GridSpec(nx, ny, nz, Lx, Ly, Lz)
+shape = (nx, ny, nz)
+dx, dy, dz = Lx / nx, Ly / ny, Lz / nz
+
+# Material parameters [MPa, N/mm^2]
+E0 = 1e-1  # Void/soft material
+E1 = 1.0   # Solid material
+nu = 0.3   # Poisson's ratio
+kk = 0.0   # Regularization parameter (optional)
+
+# Topology optimization parameters
+vf = 0.3         # Target volume fraction
+penalty = 5.0    # Penalization exponent (SIMP)
+ft_type = 1      # Filter type: 1=sensitivity, 2=density
+
+# Build filter kernel
+kernel = build_filter_kernel((2, 2, 0))
+
+
+
+# ============================================================================
 # Run Optimization
 # ============================================================================
 
@@ -485,7 +487,7 @@ epsilon, sigma = lippmann_schwinger(
     epsilon_bar,
     ref_params={"lambda": lmbda0, "mu": mu0},
     grid_spec=grid_spec,
-    verbose=0,
+    verbose=1,
     depth=4,
 )
 
