@@ -18,8 +18,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 
-jax.config.update("jax_enable_x64", True)
-
 from jaxmaterials.common import GridSpec
 
 from diffmat.commons.io import save_arrays_to_vti
@@ -30,6 +28,9 @@ from diffmat.topology.initialiser import get_initial_density, init_uniform_3d, i
 
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
+jax.config.update("jax_enable_x64", True)
+jax.config.update('jax_platform_name', 'gpu')
 
 
 # ============================================================================
@@ -112,7 +113,7 @@ def optimize(
                 ft_type, 
                 vf, 
                 kernel=kernel, 
-                move=0.2, 
+                move=0.5, 
                 tol=1e-6, 
                 )
         time_oc = time.time() - t0
@@ -172,7 +173,7 @@ def optimize(
 Lx, Ly, Lz = 0.5, 0.5, 0.5
 nx, ny, nz = 99, 99, 99
 
-grid_spec = GridSpec(nx, ny, nz, Lx, Ly, Lz)
+grid_spec = GridSpec(Lx, Ly, Lz, nx, ny, nz)
 shape = (nx, ny, nz)
 dx, dy, dz = Lx / nx, Ly / ny, Lz / nz
 
@@ -201,6 +202,8 @@ kernel = build_filter_kernel((2, 2, 2))
 print("\n" + "=" * 70)
 print("TOPOLOGY OPTIMIZATION WITH DIFFERENTIABLE FFT SOLVER")
 print("=" * 70 + "\n")
+
+t_start = time.time()
 
 rho_opt, obj_hist = optimize(
         mat=mat,
@@ -231,5 +234,5 @@ plt.show()
 
 print("\nOptimization complete!")
 
-
+print(f"\n---------- TOTAL TIME CONSUMED: {time.time()-t_start} s")
 
