@@ -5,7 +5,7 @@ import pytest
 from jax import numpy as jnp
 from jax.test_util import check_vjp
 from jaxmaterials.common import GridSpec
-from diffmat.lippmann_schwinger import solve
+from diffmat.fracture.lippmann_schwinger import solve
 
 jax.config.update("jax_enable_x64", True)
 
