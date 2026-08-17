@@ -70,6 +70,7 @@ def optimize(
             spacing=shape,
             origin=(0,0,0),
             )
+    open(f"results/topology/to_vf{vf}/convergence.txt", "w").close()
 
     change, loop = 10.0, 0
     objective_values = []
@@ -121,6 +122,9 @@ def optimize(
         objective_values.append(float(c))
         status = f"iter {loop:3d} | obj {c:8.4f} | vol {vol_frac:6.3f} | Δρ {change:6.3f}"
         
+        with open(f"results/topology/to_vf{vf}/convergence.txt", "a") as f:
+            f.write(f"{-float(c)}\n")
+
         print(f"{status}")
         print(f"  └─ compute: {time_compute:.3f}s | filter: {time_filter:.3f}s | OC: {time_oc:.3f}s")
         

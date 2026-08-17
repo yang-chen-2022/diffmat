@@ -86,9 +86,9 @@ def compute_c(rho, mat, grid_spec):
         ref_params={"lambda": lmbda0, "mu": mu0},
         grid_spec=grid_spec,
         tol=1.0e-4,
-        maxits=2000,
+        maxits=1000,
         verbose=0,
-        depth=8,
+        depth=4,
     )
     
     sigma_bar = jnp.mean(sigma, axis=[1, 2, 3])
