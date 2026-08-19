@@ -24,6 +24,11 @@ def get_initial_density(vf, shape):
                   (y - ny / 2.0 - 0.5) ** 2 + 
                   (z - nz / 2.0 - 0.5) ** 2 )
     rho[r < d] = vf / 2.0
+
+    # Verify
+    actual_vf = np.mean(rho)
+    print(f"  init_spherical_hole_3d: target vf={vf:.4f}, actual mean(rho)={actual_vf:.4f}")
+
     return rho
 
 

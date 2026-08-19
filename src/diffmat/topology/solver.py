@@ -85,15 +85,15 @@ def compute_c(rho, mat, grid_spec):
         epsilon_bar,
         ref_params={"lambda": lmbda0, "mu": mu0},
         grid_spec=grid_spec,
-        tol=1.0e-4,
-        maxits=1000,
-        verbose=0,
+        tol=1.0e-3,
+        maxits=2000,
+        verbose=1,
         depth=4,
     )
     
     sigma_bar = jnp.mean(sigma, axis=[1, 2, 3])
     energy = jnp.sum( epsilon_bar[:3]*sigma_bar[:3] + 
-                       epsilon_bar[3:]*sigma_bar[3:] * 2 )
+                      epsilon_bar[3:]*sigma_bar[3:] * 2 )
 
     return -energy / 9
 

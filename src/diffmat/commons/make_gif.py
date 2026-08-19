@@ -87,7 +87,7 @@ if not files:
 font_size = 32
 label_position = (20, 20)
 
-iterations = np.arange(0, 11) * 3
+iterations = np.arange(0, 10) * 10
 
 images = []
 

@@ -4,6 +4,9 @@ from jax import numpy as jnp
 from jaxmaterials.solver.lippmann_schwinger import lippmann_schwinger
 from diffmat.fracture.utilities import voigt_to_tensor, tensor_to_voigt
 from diffmat.fracture.lippmann_schwinger import solve
+from diffmat.commons.io import save_arrays_to_vti
+
+import os
 
 
 def compute_sigma_damaged(epsilon, params):
@@ -124,6 +127,8 @@ def elastodamage_phasefield_solve(
     k_stab=1e-6,
     maxiter_PF=10000,
     maxiter_Elas=10000,
+    out_dir='',
+    earlystop=None,
 ):
 
     dtype = lmbda.dtype
@@ -136,13 +141,28 @@ def elastodamage_phasefield_solve(
     HH = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype)
 
     # variable placeholder
-    dfield = {}
-    epsfield = {}
-    sigfield = {}
-
     sig_steps = []
     eps_steps = []
 
+    # output file for macroscopic stresses & strains
+    file_path = os.path.join(out_dir, "macro_curve.txt")
+    with open(file_path, "w") as f:
+        header = (
+                f"{'step':>8}"
+                f"{'e11':>15}{'e22':>15}{'e33':>15}"
+                f"{'e12':>15}{'e13':>15}{'e23':>15}"
+                f"{'s11':>15}{'s22':>15}{'s33':>15}"
+                f"{'s12':>15}{'s13':>15}{'s23':>15}\n"
+                )
+        f.write(header)
+
+    # variables for early stopping
+    peak_stress = 0.0  # Track the peak stress
+    prev_sig_norm = 0.0  # Track previous stress norm
+    decreasing_steps = 0  # Count consecutive steps of decreasing stress
+    min_decreasing_steps = 3  # Require at least this many consecutive decreasing steps to confirm trend
+
+    # Solution loop
     for step, E_mean in enumerate(Emean_steps):
         print(f"======== Time Step {step}  ========")
 
@@ -153,7 +173,7 @@ def elastodamage_phasefield_solve(
             gc,
             lc,
             grid,
-            tolerance=1e-6,
+            tolerance=1e-5,
             maxiter=maxiter_PF,
             verbose=1,
         )
@@ -186,12 +206,61 @@ def elastodamage_phasefield_solve(
         HH = jnp.maximum(HH, psi)
         jax.block_until_ready(HH)
 
-        if step in save_steps:
-            dfield[step] = d
-            epsfield[step] = epsilon
-            sigfield[step] = sigma
+        # save
+        with open(os.path.join(out_dir, "macro_curve.txt"), "a") as f:
+            line = (
+                f"{step:8d}"
+                + "".join(f"{x:15.6e}" for x in epsAV)
+                + "".join(f"{x:15.6e}" for x in sigAV)
+                + "\n"
+            )
+            f.write(line)
 
-    return jnp.array(eps_steps), jnp.array(sig_steps), epsfield, sigfield, dfield
+        if step in save_steps:
+            save_arrays_to_vti(
+                filename=f"{out_dir}/fields_{step:04d}.vtk",
+                arrays=[epsilon, sigma, d[None, ...]],
+                names=["Strain", "Stress", "Damage"],
+                spacing=grid.grid_spacings,
+                origin=(0, 0, 0),
+                stack_components=True,
+            )
+
+        # Early stopping condition: stop after peak stress when consistently decreasing
+        if earlystop is not None:
+            sig_norm = jnp.linalg.norm(sigAV)
+
+            # Update peak stress
+            if sig_norm > peak_stress:
+                peak_stress = sig_norm
+                decreasing_steps = 0  # Reset counter when peak increases
+            elif step > 0 and sig_norm < prev_sig_norm:
+                # Stress is decreasing
+                decreasing_steps += 1
+            else:
+                # Stress increased or stayed same after peak, reset counter
+                decreasing_steps = 0
+
+            # Check stopping condition: consistently decreasing AND below threshold
+            if decreasing_steps >= min_decreasing_steps:
+                threshold_value = peak_stress * earlystop
+                if sig_norm < threshold_value:
+                    save_arrays_to_vti(
+                       filename=f"{out_dir}/fields_{step:04d}.vtk",
+                       arrays=[epsilon, sigma, d[None, ...]],
+                       names=["Strain", "Stress", "Damage"],
+                       spacing=grid.grid_spacings,
+                       origin=(0, 0, 0),
+                       stack_components=True,
+                    )
+                    
+                    print(f"Early stopping at step {step}: stress norm {sig_norm:.6f} < threshold {threshold_value:.6f} "
+                          f"({earlystop*100}% of peak {peak_stress:.6f}) after {decreasing_steps} consecutive decreasing steps")
+                    break
+
+            prev_sig_norm = sig_norm
+
+    return jnp.array(eps_steps), jnp.array(sig_steps)
 
 
 

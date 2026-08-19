@@ -24,7 +24,7 @@ from diffmat.commons.io import save_arrays_to_vti
 from diffmat.topology.filtering import build_filter_kernel, apply_sensitivity_filter  
 from diffmat.topology.oc import oc
 from diffmat.topology.solver import compute_c
-from diffmat.topology.initialiser import get_initial_density, init_uniform_3d, init_spherical_hole_3d, init_multiple_spheres_3d, init_random_3d, init_checkerboard_3d, init_layered_3d, init_center_dense_3d
+from diffmat.topology.initialiser import get_initial_density
 
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
@@ -59,38 +59,56 @@ def optimize(
     objective_values : list
         Compliance history
     """
+
+    # Output directories
+    out_dir = f"results/topology/to_vf{vf}"
+    os.makedirs(out_dir, exist_ok=True)
+    vtk_dir = os.path.join(out_dir, "vtk_seq")
+    os.makedirs(vtk_dir, exist_ok=True)
+
+    # Initial density field
     rho = get_initial_density(vf, shape)
-    #rho = init_spherical_hole_3d(vf, shape)
-    #rho = init_uniform_3d(vf, shape)
-    #rho = init_multiple_spheres_3d(vf, shape, num_spheres=3, hole_radius_factor=0.15)
 
     save_arrays_to_vti(
-                filename=f"results/topology/to_vf{vf}/vtk_seq/{prefix}000.vtk",
+            filename=f"{vtk_dir}/{prefix}000.vtk",
             arrays=[rho[None, ...]],
             names=["density"],
             spacing=shape,
             origin=(0,0,0),
             )
-    open(f"results/topology/to_vf{vf}/convergence.txt", "w").close()
+    open(os.path.join(out_dir, "convergence.txt"), "w").close()
 
     change, loop = 10.0, 0
     objective_values = []
     
+    # Pre-create and JIT the value_and_grad function bound to mat and grid_spec.
+    # Doing this once avoids repeated retracing and compilation inside the loop,
+    # which was causing increasing host memory usage.
+    #
+    # We bind mat and grid_spec so the jitted function only takes rho as input.
+    value_and_grad_fn = jax.jit(
+        jax.value_and_grad(lambda rho: compute_c(rho, mat, grid_spec), argnums=0, has_aux=False)
+    )
+
     while change > 0.01 and loop < max_iter:
         loop += 1
-        
-        rho = jnp.asarray(rho)
 
-        # Compute objective and sensitivity
+        # Ensure rho is a JAX array before calling the jitted function
+        rho = jnp.asarray(rho)    
+
+        # Compute objective and sensitivity (single pre-jitted call)
         t0 = time.time()
-        value_grad_fn = jax.value_and_grad(compute_c, argnums=0, has_aux=False)
-        c, dc = value_grad_fn(rho, mat, grid_spec)
+        c, dc = value_and_grad_fn(rho)
         c.block_until_ready()
         time_compute = time.time() - t0
-        
+
+        # Move computed arrays to host in one explicit call to avoid many small host copies
+        c_host, dc_host = jax.device_get((c, dc))
+        c = np.asarray(c_host)
+        dc = np.asarray(dc_host)
+
+        # Convert rho to numpy for downstream (filter / OC / IO)
         rho = np.asarray(rho)
-        c = np.asarray(c)
-        dc = np.asarray(dc)
 
         # Apply filter
         t0 = time.time()
@@ -139,7 +157,7 @@ def optimize(
             #plt.close()
             # Save
             save_arrays_to_vti(
-                    filename=f"results/topology/to_vf{vf}/vtk_seq/{prefix}{loop:03d}.vtk",
+                filename=f"{vtk_dir}/{prefix}{loop:03d}.vtk",
                 arrays=[rho[None, ...]],
                 names=["density"],
                 spacing=shape,
@@ -155,7 +173,7 @@ def optimize(
 
     # Save
     save_arrays_to_vti(
-            filename=f"results/topology/to_vf{vf}/vtk_seq/{prefix}{loop:03d}.vtk",
+        filename=f"{vtk_dir}/{prefix}{loop:03d}.vtk",
         arrays=[rho[None, ...]],
         names=["density"],
             spacing=shape,
@@ -187,12 +205,11 @@ mat = {
     }
 
 # Topology optimization parameters
-vf = 0.2         # Target volume fraction
+vf = 0.4        # Target volume fraction
 ft_type = 1      # Filter type: 1=sensitivity, 2=density
 
 # Build filter kernel
 kernel = build_filter_kernel((2, 2, 2))
-
 
 
 # ============================================================================
