@@ -8,7 +8,7 @@ import jax
 from jax import numpy as jnp
 
 from diffmat.fracture.solver import elastodamage_phasefield_solve
-from diffmat.fracture.rvegen import generate_particles_periodic, voxelise_particles_periodic
+from diffmat.fracture.rvegen import generate_particles_periodic, voxelise_particles_periodic, init_material
 from diffmat.commons.io import save_arrays_to_vti
 
 from jaxmaterials.common import get_grid_spec
@@ -23,7 +23,7 @@ jax.config.update('jax_platform_name', 'gpu')
 
 
 # Output directories
-out_dir = f"results/fracture/"
+out_dir = f"results/tmp/"
 os.makedirs(out_dir, exist_ok=True)
 
 
@@ -74,35 +74,20 @@ save_arrays_to_vti(
 )
 
 
-# ============================================================================
-# Material Properties for Phase-Field Fracture Model
-# ============================================================================
-
-def init_material(lmbda_list, mu_list, gc_list, lc_list,dtype=jnp.float64):
-    lmbda_grid = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=dtype)
-    mu_grid = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=dtype)
-    gc_grid = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=dtype)
-    lc_grid = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=dtype)
-    
-    num_mats = len(lmbda_list)
-    matids = np.unique(matID)
-    
-    for i in range(num_mats):
-        lmbda_grid = lmbda_grid.at[matID == matids[i]].set(lmbda_list[i])
-        mu_grid = mu_grid.at[matID == matids[i]].set(mu_list[i])
-        gc_grid = gc_grid.at[matID == matids[i]].set(gc_list[i])
-        lc_grid = lc_grid.at[matID == matids[i]].set(lc_list[i])
-    
-    return lmbda_grid, mu_grid, gc_grid, lc_grid
-
-
 # Define material properties: [matrix, inclusion]
 lmbda_list = [10., 100.]    # Lame parameter
 mu_list = [8., 80.]         # Shear modulus
 gc_list = [2.e-3, 2.e-3]    # Critical energy release rate
 lc_list = [0.08, 0.08]      # Characteristic length
 
-lmbda_grid, mu_grid, gc_grid, lc_grid = init_material(lmbda_list, mu_list, gc_list, lc_list, jnp.float64)
+lmbda_grid, mu_grid, gc_grid, lc_grid = init_material(
+        matID,
+        lmbda_list, 
+        mu_list, 
+        gc_list, 
+        lc_list, 
+        jnp.float64,
+        )
 
 # ============================================================================
 # Loading and Solver Setup
@@ -139,6 +124,7 @@ epsMacro, sigMacro = elastodamage_phasefield_solve(
     maxiter_PF=2000,
     maxiter_Elas=2000,
     out_dir=out_dir,
+    earlystop=0.2,
 )
 print(f"TOTAL TIME FOR PFM SOLVE: {(time.time()-t_start):.3f} s")
 
@@ -147,27 +133,11 @@ print(f"TOTAL TIME FOR PFM SOLVE: {(time.time()-t_start):.3f} s")
 # ============================================================================
 
 # Plot stress-strain curve
-icomp = 0  # x-component
-plt.figure()
-plt.plot(epsMacro[:, icomp], sigMacro[:, icomp], "-*", label="Full history")
-plt.plot(
-    epsMacro[save_steps, icomp],
-    sigMacro[save_steps, icomp],
-    "o",
-    label="Saved steps",
-)
-plt.xlabel("Strain (xx-component)")
-plt.ylabel("Stress (xx-component)")
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.show()
-
-
-#
 filename = f"{out_dir}/macro_curve.txt"
 data = np.genfromtxt(filename, names=True)
 data = {name: data[name] for name in data.dtype.names}
 
+save_steps = (data["step"][data["vtk"]==1]).astype(int)
 
 plt.figure()
 plt.plot(data["e11"], data["s11"], "-*", label="Stress-strain curve")

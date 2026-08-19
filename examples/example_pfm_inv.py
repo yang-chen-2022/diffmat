@@ -134,7 +134,7 @@ epsMacro, sigMacro = elastodamage_phasefield_solve(
     maxiter_PF=2000,
     maxiter_Elas=2000,
     out_dir=out_dir,
-    earlystop=25,
+    earlystop=0.2,
 )
 print(f"TOTAL TIME FOR PFM SOLVE: {(time.time()-t_start):.3f} s")
 
@@ -143,27 +143,11 @@ print(f"TOTAL TIME FOR PFM SOLVE: {(time.time()-t_start):.3f} s")
 # ============================================================================
 
 # Plot stress-strain curve
-icomp = 0  # x-component
-plt.figure()
-plt.plot(epsMacro[:, icomp], sigMacro[:, icomp], "-*", label="Full history")
-plt.plot(
-    epsMacro[save_steps, icomp],
-    sigMacro[save_steps, icomp],
-    "o",
-    label="Saved steps",
-)
-plt.xlabel("Strain (xx-component)")
-plt.ylabel("Stress (xx-component)")
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.show()
-
-
-#
 filename = f"{out_dir}/macro_curve.txt"
 data = np.genfromtxt(filename, names=True)
 data = {name: data[name] for name in data.dtype.names}
 
+save_steps = (data["step"][data["vtk"]==1]).astype(int)
 
 plt.figure()
 plt.plot(data["e11"], data["s11"], "-*", label="Stress-strain curve")
