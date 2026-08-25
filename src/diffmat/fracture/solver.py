@@ -17,53 +17,37 @@ def compute_sigma_damaged(epsilon, params):
      :arg params:
           lmbda - spatially varying Lame parameter lambda
            mu - spatially varying Lame parameter mu
-           d - damage variable (Nx, Ny, Nz).
-           k -  Stabilisation parameter for the damage
+           d_phase - damage variable (Nx, Ny, Nz).
+           k_stab -  Stabilisation parameter for the damage
     """
-
-    lmbda, mu, d, k = params
+    lmbda, mu, d_phase, k_stab = params
 
     eps_tensor = voigt_to_tensor(epsilon)
-
     tr_eps = jnp.trace(eps_tensor, axis1=-2, axis2=-1)
-    tr_eps_plus = jnp.maximum(tr_eps, 0.0)
-    tr_eps_minus = jnp.minimum(tr_eps, 0.0)
+    sigma = {}
+    for sign, op in (("+", jnp.maximum), ("-", jnp.minimum)):
+        tr_eps_signed = op(tr_eps, 0.0)
 
-    # Get eigenvalues n eigenvectors
-    eigvals, eigvecs = jnp.linalg.eigh(eps_tensor)
+        # Get eigenvalues and eigenvectors
+        eigvals, eigvecs = jnp.linalg.eigh(eps_tensor)
+        eigvals_signed = op(eigvals, 0.0)
 
-    eigvals_plus = jnp.maximum(eigvals, 0.0)
-    eigvals_minus = jnp.minimum(eigvals, 0.0)
+        # Reconstruct the signed strain tensors (eps_plus / eps_minus)
+        # This uses einsum to do: V * Lambda_signed * V^T across the entire
+        # 3D grid instantly
+        eps_signed_tensor = jnp.einsum(
+            "...ia,...a,...ja->...ij", eigvecs, eigvals_signed, eigvecs
+        )
 
-    # Reconstruct the positive and negative strain tensors (eps_plus / eps_minus)
-    # This uses einsum to do: V * Lambda_plus * V^T across the entire 3D grid instantly
-    eps_plus_tensor = jnp.einsum(
-        "...ia,...a,...ja->...ij", eigvecs, eigvals_plus, eigvecs
-    )
-    eps_minus_tensor = jnp.einsum(
-        "...ia,...a,...ja->...ij", eigvecs, eigvals_minus, eigvecs
-    )
+        # Convert back to Voigt notation for the stress equation
+        eps_signed_v = tensor_to_voigt(eps_signed_tensor)
 
-    # Convert back to Voigt notation for the stress equation
-    eps_plus_v = tensor_to_voigt(eps_plus_tensor)
-    eps_minus_v = tensor_to_voigt(eps_minus_tensor)
-
-    # Calculate pure tension stress and pure compression stress
-    sigma_plus = 2.0 * mu * eps_plus_v
-    sigma_minus = 2.0 * mu * eps_minus_v
-    vol = vol = lmbda * tr_eps_plus
-    sigma_plus = sigma_plus.at[0].add(vol)
-    sigma_plus = sigma_plus.at[1].add(vol)
-    sigma_plus = sigma_plus.at[2].add(vol)
-
-    vol = lmbda * tr_eps_minus
-    sigma_minus = 2.0 * mu * eps_minus_v
-    sigma_minus = sigma_minus.at[0].add(vol)
-    sigma_minus = sigma_minus.at[1].add(vol)
-    sigma_minus = sigma_minus.at[2].add(vol)
+        # Calculate pure tension stress and pure compression stress
+        sigma[sign] = 2.0 * mu * eps_signed_v
+        sigma[sign] = sigma[sign].at[:3].add(lmbda * tr_eps_signed)
 
     # Apply damage degradation (g_d) ONLY to the tension (positive) stress
-    return ((1.0 - d[None, ...]) ** 2 + k) * sigma_plus + sigma_minus
+    return ((1.0 - d_phase[None, ...]) ** 2 + k_stab) * sigma["+"] + sigma["-"]
 
 
 def compute_strain_energy(lmbda, mu, epsilon):
@@ -110,7 +94,9 @@ def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000, ver
     A_n = 1.0 / (lc**2) + 2.0 * HH / (gc * lc)
     B_n = 2.0 * HH / (gc * lc)
 
-    d_final = solve(B_n, A_n, grid, jax.lax.stop_gradient(d_old), tolerance, maxiter, verbose)
+    d_final = solve(
+        B_n, A_n, grid, jax.lax.stop_gradient(d_old), tolerance, maxiter, verbose
+    )
 
     return d_final
 
@@ -127,7 +113,7 @@ def elastodamage_phasefield_solve(
     k_stab=1e-6,
     maxiter_PF=10000,
     maxiter_Elas=10000,
-    out_dir='',
+    out_dir="",
     earlystop=None,
 ):
 
@@ -148,19 +134,21 @@ def elastodamage_phasefield_solve(
     file_path = os.path.join(out_dir, "macro_curve.txt")
     with open(file_path, "w") as f:
         header = (
-                f"{'step':>8}"
-                f"{'e11':>15}{'e22':>15}{'e33':>15}"
-                f"{'e12':>15}{'e13':>15}{'e23':>15}"
-                f"{'s11':>15}{'s22':>15}{'s33':>15}"
-                f"{'s12':>15}{'s13':>15}{'s23':>15}\n"
-                )
+            f"{'step':>8}"
+            f"{'e11':>15}{'e22':>15}{'e33':>15}"
+            f"{'e12':>15}{'e13':>15}{'e23':>15}"
+            f"{'s11':>15}{'s22':>15}{'s33':>15}"
+            f"{'s12':>15}{'s13':>15}{'s23':>15}\n"
+        )
         f.write(header)
 
     # variables for early stopping
     peak_stress = 0.0  # Track the peak stress
     prev_sig_norm = 0.0  # Track previous stress norm
     decreasing_steps = 0  # Count consecutive steps of decreasing stress
-    min_decreasing_steps = 3  # Require at least this many consecutive decreasing steps to confirm trend
+    min_decreasing_steps = (
+        3  # Require at least this many consecutive decreasing steps to confirm trend
+    )
 
     # Solution loop
     for step, E_mean in enumerate(Emean_steps):
@@ -246,25 +234,20 @@ def elastodamage_phasefield_solve(
                 threshold_value = peak_stress * earlystop
                 if sig_norm < threshold_value:
                     save_arrays_to_vti(
-                       filename=f"{out_dir}/fields_{step:04d}.vtk",
-                       arrays=[epsilon, sigma, d[None, ...]],
-                       names=["Strain", "Stress", "Damage"],
-                       spacing=grid.grid_spacings,
-                       origin=(0, 0, 0),
-                       stack_components=True,
+                        filename=f"{out_dir}/fields_{step:04d}.vtk",
+                        arrays=[epsilon, sigma, d[None, ...]],
+                        names=["Strain", "Stress", "Damage"],
+                        spacing=grid.grid_spacings,
+                        origin=(0, 0, 0),
+                        stack_components=True,
                     )
-                    
-                    print(f"Early stopping at step {step}: stress norm {sig_norm:.6f} < threshold {threshold_value:.6f} "
-                          f"({earlystop*100}% of peak {peak_stress:.6f}) after {decreasing_steps} consecutive decreasing steps")
+
+                    print(
+                        f"Early stopping at step {step}: stress norm {sig_norm:.6f} < threshold {threshold_value:.6f} "
+                        f"({earlystop * 100}% of peak {peak_stress:.6f}) after {decreasing_steps} consecutive decreasing steps"
+                    )
                     break
 
             prev_sig_norm = sig_norm
 
     return jnp.array(eps_steps), jnp.array(sig_steps)
-
-
-
-
-
-
-
