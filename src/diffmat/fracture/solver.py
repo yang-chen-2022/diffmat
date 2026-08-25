@@ -51,11 +51,13 @@ def compute_sigma_damaged(epsilon, params):
     # Calculate pure tension stress and pure compression stress
     sigma_plus = 2.0 * mu * eps_plus_v
     sigma_minus = 2.0 * mu * eps_minus_v
-    vol = vol = lmbda * tr_eps_plus
+
+    vol = lmbda * tr_eps_plus
+    sigma_plus = 2.0 * mu * eps_plus_v
     sigma_plus = sigma_plus.at[0].add(vol)
     sigma_plus = sigma_plus.at[1].add(vol)
     sigma_plus = sigma_plus.at[2].add(vol)
-
+    
     vol = lmbda * tr_eps_minus
     sigma_minus = 2.0 * mu * eps_minus_v
     sigma_minus = sigma_minus.at[0].add(vol)
@@ -152,7 +154,8 @@ def elastodamage_phasefield_solve(
                 f"{'e11':>15}{'e22':>15}{'e33':>15}"
                 f"{'e12':>15}{'e13':>15}{'e23':>15}"
                 f"{'s11':>15}{'s22':>15}{'s33':>15}"
-                f"{'s12':>15}{'s13':>15}{'s23':>15}\n"
+                f"{'s12':>15}{'s13':>15}{'s23':>15}"
+                f"{'vtk':>15}\n"
                 )
         f.write(header)
 
@@ -186,7 +189,7 @@ def elastodamage_phasefield_solve(
             E_mean,
             ref_params={"lambda": lmbda0, "mu": mu0},
             grid_spec=grid,
-            tol=1.0e-4,
+            tol=1.0e-3,
             maxits=maxiter_Elas,
             verbose=1,
             depth=4,
@@ -206,16 +209,9 @@ def elastodamage_phasefield_solve(
         HH = jnp.maximum(HH, psi)
         jax.block_until_ready(HH)
 
-        # save
-        with open(os.path.join(out_dir, "macro_curve.txt"), "a") as f:
-            line = (
-                f"{step:8d}"
-                + "".join(f"{x:15.6e}" for x in epsAV)
-                + "".join(f"{x:15.6e}" for x in sigAV)
-                + "\n"
-            )
-            f.write(line)
 
+        # Save vtk fields
+        vtk_saved = False
         if step in save_steps:
             save_arrays_to_vti(
                 filename=f"{out_dir}/fields_{step:04d}.vtk",
@@ -225,8 +221,10 @@ def elastodamage_phasefield_solve(
                 origin=(0, 0, 0),
                 stack_components=True,
             )
+            vtk_saved = True
 
         # Early stopping condition: stop after peak stress when consistently decreasing
+        break_flag = False
         if earlystop is not None:
             sig_norm = jnp.linalg.norm(sigAV)
 
@@ -253,12 +251,27 @@ def elastodamage_phasefield_solve(
                        origin=(0, 0, 0),
                        stack_components=True,
                     )
+                    vtk_saved = True
                     
                     print(f"Early stopping at step {step}: stress norm {sig_norm:.6f} < threshold {threshold_value:.6f} "
                           f"({earlystop*100}% of peak {peak_stress:.6f}) after {decreasing_steps} consecutive decreasing steps")
-                    break
+                    break_flag = True
 
             prev_sig_norm = sig_norm
+
+        # write macro stress, strain
+        with open(os.path.join(out_dir, "macro_curve.txt"), "a") as f:
+            line = (
+                f"{step:8d}"
+                + "".join(f"{x:15.6e}" for x in epsAV)
+                + "".join(f"{x:15.6e}" for x in sigAV)
+                + f"{int(vtk_saved):15d}"
+                + "\n"
+            )
+            f.write(line)
+
+        if break_flag:
+            break
 
     return jnp.array(eps_steps), jnp.array(sig_steps)
 
