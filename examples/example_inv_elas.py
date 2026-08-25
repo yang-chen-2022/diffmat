@@ -288,7 +288,7 @@ if __name__ == "__main__":
         grid,
         matID,
         eps_probes,
-        maxiter=20,
+        maxiter=10,
         tol=1e-6,
         reg=1e-8,
         damp_init=1.0,
@@ -313,3 +313,89 @@ if __name__ == "__main__":
     print("Residual norm history:", history["res_norm"])
 
 
+
+
+
+
+
+
+# -----------------------
+# Visualization of convergence (append after the residual print)
+# -----------------------
+
+plt.rcParams.update({
+    "font.size": 16,        # Base font size
+    "axes.titlesize": 16,   # Subplot titles
+    "axes.labelsize": 14,   # Axis labels
+    "xtick.labelsize": 12,  # X tick labels
+    "ytick.labelsize": 12,  # Y tick labels
+    "legend.fontsize": 16,  # Legend text
+})
+
+
+if len(history["u"]) > 0:
+    # Convert history list -> arrays
+    u_hist = np.asarray(history["u"])  # shape (n_iters, 4)
+    iters = np.arange(u_hist.shape[0])
+
+    # Elastic moduli (E) histories (stored as logE in u)
+    E_m_hist = np.exp(u_hist[:, 0])
+    E_p_hist = np.exp(u_hist[:, 1])
+
+    # Poisson's ratios: use the same reparameterization used in the example
+    # s_to_nu accepts jax arrays, convert to numpy afterwards
+    nu_m_hist = np.array(s_to_nu(jnp.asarray(u_hist[:, 2])))
+    nu_p_hist = np.array(s_to_nu(jnp.asarray(u_hist[:, 3])))
+
+    # True values (from earlier in the script)
+    E_m_true = float(E_true_matrix)
+    E_p_true = float(E_true_particle)
+    nu_m_true = float(nu_true_matrix)
+    nu_p_true = float(nu_true_particle)
+
+    # Plot E histories (log scale) and nu histories
+    fig, axs = plt.subplots(1, 2, figsize=(10, 6))
+
+    ax = axs[0]
+    ax.plot(iters, E_m_hist, "o-", label="E_matrix (iter)")
+    ax.plot(iters, E_p_hist, "s-", label="E_particle (iter)")
+    ax.hlines(E_m_true, iters[0], iters[-1], colors="C0", linestyles="--", label="E_matrix (true)")
+    ax.hlines(E_p_true, iters[0], iters[-1], colors="C1", linestyles="--", label="E_particle (true)")
+    ax.set_yscale("log")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("E (Pa)")
+    ax.set_title("Elastic moduli convergence")
+    ax.legend()
+    ax.grid(True, which="both", ls=":", alpha=0.5)
+
+    ax = axs[1]
+    ax.plot(iters, nu_m_hist, "o-", label="nu_matrix (iter)")
+    ax.plot(iters, nu_p_hist, "s-", label="nu_particle (iter)")
+    ax.hlines(nu_m_true, iters[0], iters[-1], colors="C0", linestyles="--", label="nu_matrix (true)")
+    ax.hlines(nu_p_true, iters[0], iters[-1], colors="C1", linestyles="--", label="nu_particle (true)")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Poisson's ratio")
+    ax.set_title("Poisson's ratio convergence")
+    ax.legend()
+    ax.grid(True, ls=":", alpha=0.5)
+
+    plt.tight_layout()
+    plt.savefig(
+        f"results/matiden/inv_convergence.png",
+        dpi=300,
+        bbox_inches="tight"
+    )
+    plt.show()
+
+    # Residual norm history
+    if "res_norm" in history:
+        plt.figure(figsize=(6, 4))
+        plt.plot(np.arange(len(history["res_norm"])), history["res_norm"], "o-")
+        plt.yscale("log")
+        plt.xlabel("Iteration")
+        plt.ylabel("Residual norm")
+        plt.title("Residual norm history")
+        plt.grid(True, which="both", ls=":", alpha=0.5)
+        plt.show()
+else:
+    print("No history recorded for visualization.")
