@@ -24,7 +24,7 @@ jax.config.update('jax_platform_name', 'gpu')
 
 
 # Output directories
-out_dir = f"results/fracture/forward"
+out_dir = f"results/fracture/forward_2"
 os.makedirs(out_dir, exist_ok=True)
 
 
@@ -45,7 +45,7 @@ grid = get_grid_spec(
         )
 
 # Random particle distribution
-np.random.seed(42)
+np.random.seed(123)
 n_particles = 20
 radius_range = [0.05, 0.1]
 t0 = time.time()

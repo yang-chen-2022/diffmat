@@ -339,8 +339,8 @@ if len(history["u"]) > 0:
     iters = np.arange(u_hist.shape[0])
 
     # Elastic moduli (E) histories (stored as logE in u)
-    E_m_hist = np.exp(u_hist[:, 0])
-    E_p_hist = np.exp(u_hist[:, 1])
+    E_m_hist = np.exp(u_hist[:, 0]) / 1e3
+    E_p_hist = np.exp(u_hist[:, 1]) / 1e3
 
     # Poisson's ratios: use the same reparameterization used in the example
     # s_to_nu accepts jax arrays, convert to numpy afterwards
@@ -348,8 +348,8 @@ if len(history["u"]) > 0:
     nu_p_hist = np.array(s_to_nu(jnp.asarray(u_hist[:, 3])))
 
     # True values (from earlier in the script)
-    E_m_true = float(E_true_matrix)
-    E_p_true = float(E_true_particle)
+    E_m_true = float(E_true_matrix) / 1e3
+    E_p_true = float(E_true_particle) / 1e3
     nu_m_true = float(nu_true_matrix)
     nu_p_true = float(nu_true_particle)
 
@@ -362,8 +362,8 @@ if len(history["u"]) > 0:
     ax.hlines(E_m_true, iters[0], iters[-1], colors="C0", linestyles="--", label="E_matrix (true)")
     ax.hlines(E_p_true, iters[0], iters[-1], colors="C1", linestyles="--", label="E_particle (true)")
     ax.set_yscale("log")
-    ax.set_xlabel("Iteration")
-    ax.set_ylabel("E (Pa)")
+    ax.set_xlabel("Newton iteration")
+    ax.set_ylabel("E (GPa)")
     ax.set_title("Elastic moduli convergence")
     ax.legend()
     ax.grid(True, which="both", ls=":", alpha=0.5)
@@ -373,7 +373,7 @@ if len(history["u"]) > 0:
     ax.plot(iters, nu_p_hist, "s-", label="nu_particle (iter)")
     ax.hlines(nu_m_true, iters[0], iters[-1], colors="C0", linestyles="--", label="nu_matrix (true)")
     ax.hlines(nu_p_true, iters[0], iters[-1], colors="C1", linestyles="--", label="nu_particle (true)")
-    ax.set_xlabel("Iteration")
+    ax.set_xlabel("Newton iteration")
     ax.set_ylabel("Poisson's ratio")
     ax.set_title("Poisson's ratio convergence")
     ax.legend()

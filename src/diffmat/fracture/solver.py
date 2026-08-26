@@ -132,22 +132,13 @@ def elastodamage_phasefield_solve(
     file_path = os.path.join(out_dir, "macro_curve.txt")
     with open(file_path, "w") as f:
         header = (
-<<<<<<< HEAD
-                f"{'step':>8}"
-                f"{'e11':>15}{'e22':>15}{'e33':>15}"
-                f"{'e12':>15}{'e13':>15}{'e23':>15}"
-                f"{'s11':>15}{'s22':>15}{'s33':>15}"
-                f"{'s12':>15}{'s13':>15}{'s23':>15}"
-                f"{'vtk':>15}\n"
-                )
-=======
             f"{'step':>8}"
             f"{'e11':>15}{'e22':>15}{'e33':>15}"
             f"{'e12':>15}{'e13':>15}{'e23':>15}"
             f"{'s11':>15}{'s22':>15}{'s33':>15}"
-            f"{'s12':>15}{'s13':>15}{'s23':>15}\n"
+            f"{'s12':>15}{'s13':>15}{'s23':>15}"
+            f"{'vtk':>15}\n"
         )
->>>>>>> compact_compute_sigma_damaged
         f.write(header)
 
     # variables for early stopping
@@ -182,7 +173,7 @@ def elastodamage_phasefield_solve(
             E_mean,
             ref_params={"lambda": lmbda0, "mu": mu0},
             grid_spec=grid,
-            tol=1.0e-3,
+            tol=1.0e-2,
             maxits=maxiter_Elas,
             verbose=1,
             depth=4,
@@ -249,15 +240,8 @@ def elastodamage_phasefield_solve(
                         f"Early stopping at step {step}: stress norm {sig_norm:.6f} < threshold {threshold_value:.6f} "
                         f"({earlystop * 100}% of peak {peak_stress:.6f}) after {decreasing_steps} consecutive decreasing steps"
                     )
-<<<<<<< HEAD
                     vtk_saved = True
-                    
-                    print(f"Early stopping at step {step}: stress norm {sig_norm:.6f} < threshold {threshold_value:.6f} "
-                          f"({earlystop*100}% of peak {peak_stress:.6f}) after {decreasing_steps} consecutive decreasing steps")
                     break_flag = True
-=======
-                    break
->>>>>>> compact_compute_sigma_damaged
 
             prev_sig_norm = sig_norm
 
