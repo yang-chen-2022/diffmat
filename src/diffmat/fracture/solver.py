@@ -28,23 +28,18 @@ def compute_sigma_damaged(epsilon, params):
     for sign, op in (("+", jnp.maximum), ("-", jnp.minimum)):
         tr_eps_signed = op(tr_eps, 0.0)
 
-        # Get eigenvalues and eigenvectors
         eigvals, eigvecs = jnp.linalg.eigh(eps_tensor)
         eigvals_signed = op(eigvals, 0.0)
 
-        # Reconstruct the signed strain tensors (eps_plus / eps_minus)
         eps_signed_tensor = jnp.einsum(
             "...ia,...a,...ja->...ij", eigvecs, eigvals_signed, eigvecs
         )
 
-        # Convert back to Voigt notation for the stress equation
         eps_signed_v = tensor_to_voigt(eps_signed_tensor)
 
-        # Calculate pure tension stress and pure compression stress
         sigma[sign] = 2.0 * mu * eps_signed_v
         sigma[sign] = sigma[sign].at[:3].add(lmbda * tr_eps_signed)
 
-    # Apply damage degradation (g_d) ONLY to the tension (positive) stress
     return ((1.0 - d_phase[None, ...]) ** 2 + k_stab) * sigma["+"] + sigma["-"]
 
 
@@ -55,21 +50,17 @@ def compute_strain_energy(lmbda, mu, epsilon):
     :arg mu: spatially varying Lame parameter mu
     :arg epsilon: strain in Voigt notation [11,22,33,12,13,23], shape (6, Nx, Ny, Nz)
     """
-    # 1. Convert to 3x3 tensor
+    
     eps_tensor = voigt_to_tensor(epsilon)
 
-    # 2. Get trace and split into positive part
     tr_eps = jnp.trace(eps_tensor, axis1=-2, axis2=-1)
     tr_eps_plus = jnp.maximum(tr_eps, 0.0)
 
-    # 3. Calculate eigenvalues using JAX's eigh function
     eigvals = jnp.linalg.eigvalsh(eps_tensor)
 
-    # 4. Filter only the positive eigenvalues
     eigvals_plus = jnp.maximum(eigvals, 0.0)
     eps_sq_plus = jnp.sum(eigvals_plus**2, axis=-1)
 
-    # 5. Compute only the tensile energy (psi_plus)
     psi_plus = 0.5 * lmbda * (tr_eps_plus**2) + mu * eps_sq_plus
 
     return psi_plus
@@ -100,7 +91,7 @@ def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000, ver
 
 
 # Staggered scheme for solving elasticity + phase-field equations
-def elastodamage_phasefield_solve(
+def solve_fracture_staggered(
     grid,
     lmbda,
     mu,
@@ -113,7 +104,12 @@ def elastodamage_phasefield_solve(
     maxiter_Elas=10000,
     out_dir="",
     earlystop=None,
+    maxiter_inner=1,
+    tolerance_inner=1e-5,
 ):
+
+    if maxiter_inner < 1:
+        raise ValueError("maxiter_inner must be at least 1")
 
     dtype = lmbda.dtype
 
@@ -153,33 +149,59 @@ def elastodamage_phasefield_solve(
     for step, E_mean in enumerate(Emean_steps):
         print(f"======== Time Step {step}  ========")
 
-        # solve phase-field
-        d = phase_field_solve(
-            HH,
-            d,
-            gc,
-            lc,
-            grid,
-            tolerance=1e-5,
-            maxiter=maxiter_PF,
-            verbose=1,
-        )
-        jax.block_until_ready(d)
+        d_previous = d
+        epsilon_previous = None
+        for inner_iteration in range(maxiter_inner):
+            # Solve both fields at the same load level until they stop changing.
+            d = phase_field_solve(
+                HH,
+                d,
+                gc,
+                lc,
+                grid,
+                tolerance=1e-5,
+                maxiter=maxiter_PF,
+                verbose=1,
+            )
+            jax.block_until_ready(d)
 
-        # solve elasticity
-        epsilon, sigma = lippmann_schwinger(
-            compute_sigma_damaged,
-            (lmbda, mu, d, k_stab),
-            E_mean,
-            ref_params={"lambda": lmbda0, "mu": mu0},
-            grid_spec=grid,
-            tol=1.0e-2,
-            maxits=maxiter_Elas,
-            verbose=1,
-            depth=4,
-        )
+            epsilon, sigma = lippmann_schwinger(
+                compute_sigma_damaged,
+                (lmbda, mu, d, k_stab),
+                E_mean,
+                ref_params={"lambda": lmbda0, "mu": mu0},
+                grid_spec=grid,
+                tol=1.0e-2,
+                maxits=maxiter_Elas,
+                verbose=1,
+                depth=4,
+            )   #NOTE: initialise with previous step's solution to speed up convergence
+            jax.block_until_ready(epsilon)
 
-        jax.block_until_ready(epsilon)
+            psi = compute_strain_energy(lmbda, mu, epsilon)
+            HH = jnp.maximum(HH, psi)
+            jax.block_until_ready(HH)
+
+            if epsilon_previous is not None:
+                strain_delta = voigt_to_tensor(epsilon - epsilon_previous)
+                strain_delta_norms = jnp.linalg.norm(strain_delta, axis=(-2, -1))
+                strain_norms = jnp.linalg.norm(
+                    voigt_to_tensor(epsilon), axis=(-2, -1)
+                )
+                previous_strain_norms = jnp.linalg.norm(
+                    voigt_to_tensor(epsilon_previous), axis=(-2, -1)
+                )
+                strain_scale = jnp.maximum(
+                    jnp.maximum(strain_norms, previous_strain_norms),
+                    jnp.finfo(epsilon.dtype).tiny,
+                )
+                strain_change = jnp.max(strain_delta_norms / strain_scale)
+                damage_change = jnp.max(jnp.abs(d - d_previous))
+                if bool((strain_change < tolerance_inner) & (damage_change < tolerance_inner)):
+                    break
+
+            epsilon_previous = epsilon
+            d_previous = d
 
         #  Save & display
         sigAV = jnp.array([jnp.mean(sigma[i]) for i in range(6)])
@@ -187,12 +209,6 @@ def elastodamage_phasefield_solve(
 
         epsAV = jnp.array([jnp.mean(epsilon[i]) for i in range(6)])
         eps_steps.append(epsAV)
-
-        # update the history field
-        psi = compute_strain_energy(lmbda, mu, epsilon)
-        HH = jnp.maximum(HH, psi)
-        jax.block_until_ready(HH)
-
 
         # Save vtk fields
         vtk_saved = False
@@ -260,3 +276,4 @@ def elastodamage_phasefield_solve(
             break
 
     return jnp.array(eps_steps), jnp.array(sig_steps)
+

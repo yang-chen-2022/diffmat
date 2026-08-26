@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 import jax
 from jax import numpy as jnp
 
-from diffmat.fracture.solver import elastodamage_phasefield_solve
+from diffmat.fracture.solver import solve_fracture_staggered
 from diffmat.fracture.rvegen import generate_particles_periodic, voxelise_particles_periodic, init_material
 from diffmat.commons.io import save_arrays_to_vti
 from diffmat.commons.utilities import eng2lame
@@ -129,9 +129,9 @@ if nsteps-1 not in save_steps:
     save_steps = np.append(save_steps, nsteps-1)
 
 
-# Solve the elastodamage phase-field problem
+# Solve the fracture problem using staggered scheme
 t_start = time.time()
-epsMacro, sigMacro = elastodamage_phasefield_solve(
+epsMacro, sigMacro = solve_fracture_staggered(
     grid,
     lmbda_grid,
     mu_grid,
