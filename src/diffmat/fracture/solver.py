@@ -106,19 +106,29 @@ def solve_fracture_staggered(
     earlystop=None,
     maxiter_inner=1,
     tolerance_inner=1e-5,
+    load_reduction_factor=None,
 ):
 
     if maxiter_inner < 1:
         raise ValueError("maxiter_inner must be at least 1")
+
+    if load_reduction_factor is not None and not 0.0 < load_reduction_factor < 1.0:
+        raise ValueError("load_reduction_factor must be between 0 and 1")
+
+    if load_reduction_factor is not None and maxiter_inner < 2:
+        raise ValueError("maxiter_inner must be >= 2 when load step subdivision is active")
+
 
     dtype = lmbda.dtype
 
     lmbda0 = 0.5 * (lmbda.max() + lmbda.min())
     mu0 = 0.5 * (mu.max() + mu.min())
 
-    # initialize damage field & history field
+    # initialize damage field & history field & local strain pertubation
     d = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype)
     HH = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype)
+    depsilon = jnp.zeros((6, grid.nx, grid.ny, grid.nz), dtype)
+    depsilon = jax.lax.stop_gradient(depsilon)
 
     # variable placeholder
     sig_steps = []
@@ -146,13 +156,20 @@ def solve_fracture_staggered(
     )
 
     # Solution loop
-    for step, E_mean in enumerate(Emean_steps):
+    load_steps = list(Emean_steps)
+    previous_load = jnp.zeros_like(load_steps[0]) if load_steps else None
+    step = 0
+    while step < len(load_steps):
+        E_mean = load_steps[step]
         print(f"======== Time Step {step}  ========")
 
+        d_start = d
+        HH_start = HH
         d_previous = d
         epsilon_previous = None
+        converged = False
+
         for inner_iteration in range(maxiter_inner):
-            # Solve both fields at the same load level until they stop changing.
             d = phase_field_solve(
                 HH,
                 d,
@@ -161,7 +178,7 @@ def solve_fracture_staggered(
                 grid,
                 tolerance=1e-5,
                 maxiter=maxiter_PF,
-                verbose=1,
+                verbose=0,
             )
             jax.block_until_ready(d)
 
@@ -169,14 +186,18 @@ def solve_fracture_staggered(
                 compute_sigma_damaged,
                 (lmbda, mu, d, k_stab),
                 E_mean,
+                delta_epsilon_initial=depsilon,
                 ref_params={"lambda": lmbda0, "mu": mu0},
                 grid_spec=grid,
                 tol=1.0e-2,
                 maxits=maxiter_Elas,
-                verbose=1,
+                verbose=0,
                 depth=4,
-            )   #NOTE: initialise with previous step's solution to speed up convergence
+            )   
             jax.block_until_ready(epsilon)
+
+            depsilon = epsilon - E_mean[:, None, None, None]
+            depsilon = jax.lax.stop_gradient(depsilon)
 
             psi = compute_strain_energy(lmbda, mu, epsilon)
             HH = jnp.maximum(HH, psi)
@@ -198,10 +219,35 @@ def solve_fracture_staggered(
                 strain_change = jnp.max(strain_delta_norms / strain_scale)
                 damage_change = jnp.max(jnp.abs(d - d_previous))
                 if bool((strain_change < tolerance_inner) & (damage_change < tolerance_inner)):
+                    converged = True
                     break
 
             epsilon_previous = epsilon
             d_previous = d
+
+        print(
+            f"Time Step {step}: completed {inner_iteration + 1} inner iteration(s)"
+        )
+
+        if not converged and load_reduction_factor is not None:
+            load_increment = E_mean - previous_load
+            if bool(jnp.linalg.norm(load_increment) <= 1e-12): #TODO: parameterise this: min_load_increment=1e-12
+                raise RuntimeError(
+                    "Fracture statggered solve reached maxiter_inner at the "
+                    "minimum load increment withouth converging"
+                )
+
+            reduced_load = previous_load + load_reduction_factor * load_increment
+            load_steps[step : step + 1] = [reduced_load, E_mean]
+            d = d_start
+            HH = HH_start
+            print(
+                f"Inner loop did not converge at step [step]; "
+                f"retrying with load increment factor {load_reduction_factor}"
+            )
+            continue
+
+        previous_load = E_mean
 
         #  Save & display
         sigAV = jnp.array([jnp.mean(sigma[i]) for i in range(6)])
@@ -275,5 +321,6 @@ def solve_fracture_staggered(
         if break_flag:
             break
 
+        step +=1
     return jnp.array(eps_steps), jnp.array(sig_steps)
 
