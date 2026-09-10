@@ -107,7 +107,61 @@ def solve_fracture_staggered(
     maxiter_inner=1,
     tolerance_inner=1e-5,
     load_reduction_factor=None,
+    output_fields=False,
 ):
+    """
+    Staggered scheme for solving elasticity + phase-field fracture equations.
+
+    Parameters:
+    -----------
+    grid : GridSpec
+        Computational grid specification
+    lmbda : array
+        Lamé parameter lambda field (nx, ny, nz)
+    mu : array
+        Lamé parameter mu (shear modulus) field (nx, ny, nz)
+    gc : array
+        Fracture toughness field (nx, ny, nz)
+    lc : array
+        Characteristic length field (nx, ny, nz)
+    Emean_steps : list
+        List of macroscopic strain vectors for each load step
+    save_steps : array
+        Indices of steps at which to save VTK output
+    k_stab : float
+        Stabilization parameter for damage (default: 1e-6)
+    maxiter_PF : int
+        Max iterations for phase-field solver (default: 10000)
+    maxiter_Elas : int
+        Max iterations for elasticity solver (default: 10000)
+    out_dir : str
+        Output directory for VTK files and macro_curve.txt (default: "")
+    earlystop : float, optional
+        Early stopping parameter: stop when stress < earlystop * peak_stress
+        after consecutive decreasing steps. If None, run full loading.
+    maxiter_inner : int
+        Max inner loop iterations for staggered scheme (default: 1)
+    tolerance_inner : float
+        Tolerance for inner loop convergence (default: 1e-5)
+    load_reduction_factor : float, optional
+        Factor for load step subdivision if inner loop doesn't converge
+    output_fields : bool
+        If True, returns stress/strain/damage fields at each saved step. If False, returns None.
+        (default: False)
+
+    Returns:
+    --------
+    eps_steps : array
+        Macroscopic strain at each step, shape (n_steps, 6)
+    sig_steps : array
+        Macroscopic stress at each step, shape (n_steps, 6)
+    stress_steps : array or None
+        Local stress field (n_steps, 6, nx, ny, nz)
+    strain_steps : array or None
+        Local strain field (n_steps, 6, nx, ny, nz)
+    damage_steps : array or None
+        Local damage field (n_steps, 1, nx, ny, nz)
+    """
 
     if maxiter_inner < 1:
         raise ValueError("maxiter_inner must be at least 1")
@@ -133,6 +187,9 @@ def solve_fracture_staggered(
     # variable placeholder
     sig_steps = []
     eps_steps = []
+    stress_steps = [] if output_fields else None  # Only allocate if needed
+    strain_steps = [] if output_fields else None  # Only allocate if needed
+    damage_steps = [] if output_fields else None  # Only allocate if needed
 
     # output file for macroscopic stresses & strains
     file_path = os.path.join(out_dir, "macro_curve.txt")
@@ -268,6 +325,11 @@ def solve_fracture_staggered(
                 stack_components=True,
             )
             vtk_saved = True
+            # Store final stress/strain/damage fields if requested
+            if output_fields:
+                stress_steps.append(np.array(sigma))
+                strain_steps.append(np.array(epsilon))
+                damage_steps.append(np.array(d[None,...]))
 
         # Early stopping condition: stop after peak stress when consistently decreasing
         break_flag = False
@@ -297,6 +359,11 @@ def solve_fracture_staggered(
                         origin=(0, 0, 0),
                         stack_components=True,
                     )
+                    # Store final stress/strain/damage fields if requested
+                    if output_fields:
+                        stress_steps.append(np.array(sigma))
+                        strain_steps.append(np.array(epsilon))
+                        damage_steps.append(np.array(d))
 
                     print(
                         f"Early stopping at step {step}: stress norm {sig_norm:.6f} < threshold {threshold_value:.6f} "
@@ -304,6 +371,7 @@ def solve_fracture_staggered(
                     )
                     vtk_saved = True
                     break_flag = True
+
 
             prev_sig_norm = sig_norm
 
@@ -322,5 +390,16 @@ def solve_fracture_staggered(
             break
 
         step +=1
-    return jnp.array(eps_steps), jnp.array(sig_steps)
+
+    if output_fields and damage_steps:
+        stress_array = jnp.array(stress_steps, dtype=dtype)
+        strain_array = jnp.array(strain_steps, dtype=dtype)
+        damage_array = jnp.array(damage_steps, dtype=dtype)
+    else:
+        stress_array = None
+        strain_array = None
+        damage_array = None
+
+    return jnp.array(eps_steps), jnp.array(sig_steps), stress_array, strain_array, damage_array
+
 

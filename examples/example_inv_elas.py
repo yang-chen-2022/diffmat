@@ -15,6 +15,7 @@ from diffmat.fracture.rvegen import (
     init_material,
 )
 from diffmat.commons.utilities import eng2lame
+from diffmat.commons.utilities import newton_raphson
 
 from jaxmaterials.common import get_grid_spec
 from jaxmaterials.solver.lippmann_schwinger import lippmann_schwinger
@@ -152,79 +153,18 @@ def newton_raphson_inverse(
     u = jnp.asarray(u0, dtype=dtype)
     sigma_target = jnp.asarray(sigma_target, dtype=dtype)
 
-    # jitted forward/residual/jacobian for speed
     forward_fn = lambda p: forward_sigma_vector(p, grid, matID, eps_probes)
     residual_fn = lambda p: forward_fn(p) - sigma_target
 
-    jitted_residual = jax.jit(residual_fn)
-    jitted_jac = jax.jit(jax.jacobian(residual_fn))
-
-    history = {"res_norm": [], "u": [], "svd": []}
-
-    damp = damp_init
-
-    for k in range(maxiter):
-        r = jitted_residual(u)  # shape (m,)
-        r_norm = jnp.linalg.norm(r)
-        history["res_norm"].append(float(r_norm))
-        history["u"].append(np.array(u))
-        print(f"[Iter {k}] residual norm = {r_norm:.6e}")
-
-        if r_norm < tol:
-            print("Converged.")
-            break
-
-        J = jitted_jac(u)  # shape (m, p)
-
-        # diagnostics: singular values
-        try:
-            sv = jnp.linalg.svd(J, compute_uv=False)
-            cond = float(sv[0] / (sv[-1] + 1e-30))
-            history["svd"].append(np.array(sv))
-            print(f"  singular values (J): {sv}")
-            print(f"  cond(J) ~ {cond:.3e}")
-        except Exception:
-            sv = None
-
-        # Normal equations: (J^T J + reg I) delta = -J^T r
-        JTJ = J.T @ J
-        rhs = -J.T @ r
-
-        # Regularize
-        JTJ_reg = JTJ + reg * jnp.eye(JTJ.shape[0], dtype=JTJ.dtype)
-
-        # Solve for delta_u in parameter space u
-        try:
-            delta_u = jnp.linalg.solve(JTJ_reg, -JT_r)
-        except Exception as e:
-            # fallback to lstsq if solve fails
-            delta_u, *_ = jnp.linalg.lstsq(J, -r, rcond=None)
-
-        # Backtracking line search / damping
-        alpha = damp
-        success = False
-        r_norm_current = r_norm
-        for trial in range(10):
-            u_candidate = u + alpha * delta_u
-            r_new = jitted_residual(u_candidate)
-            r_new_norm = jnp.linalg.norm(r_new)
-            if r_new_norm < r_norm_current:
-                success = True
-                print(f"  Accept step with alpha={alpha:.3f}, new residual {r_new_norm:.6e}")
-                u = u_candidate
-                # slightly reduce reg when successful to speed up convergence
-                reg = max(reg * 0.9, 1e-12)
-                damp = min(1.0, damp * 1.2)
-                break
-            else:
-                alpha *= 0.5
-
-        if not success:
-            # If we couldn't find an improving alpha, increase regularization and try tiny step
-            print("  Line search failed to reduce residual; increasing regularization and taking small step.")
-            reg = reg * 10.0 + 1e-12
-            u = u + 1e-2 * delta_u  # small guarded step
-            damp = max(1e-3, damp * 0.5)
+    u, history = newton_raphson(
+        residual_fn,
+        u0=u,
+        maxiter=20,
+        tol=1e-4,
+        reg_init=1e-8,
+        damp_init=1.0,
+        verbose=1,
+    )
 
     return u, history
 
