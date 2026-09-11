@@ -122,7 +122,7 @@ if nsteps-1 not in save_steps:
 
 # Solve the phase-field problem
 t_start = time.time()
-epsMacro, sigMacro = solve_fracture_staggered(
+epsMacro, sigMacro, sfield, efield, dfield = solve_fracture_staggered(
     grid,
     lmbda_grid,
     mu_grid,
@@ -138,6 +138,7 @@ epsMacro, sigMacro = solve_fracture_staggered(
     maxiter_inner=30,
     tolerance_inner=1e-1,
     load_reduction_factor=None,
+    output_fields=True,
 )
 print(f"TOTAL TIME FOR PFM SOLVE: {(time.time()-t_start):.3f} s")
 

@@ -32,7 +32,7 @@ from diffmat.fracture.rvegen import (
     voxelise_particles_periodic,
     init_material,
 )
-from diffmat.commons.utilities import eng2lame
+from diffmat.commons.utilities import eng2lame, newton_raphson
 from diffmat.commons.io import save_arrays_to_vti
 from diffmat.fracture.solver import solve_fracture_staggered
 
@@ -91,7 +91,7 @@ def coarsen_field_3d(field, coarse_shape):
         Input field, shape (nx, ny, nz) or (6, nx, ny, nz) for strain
     coarse_shape : tuple
         Target shape (nx_coarse, ny_coarse, nz_coarse)
-    
+
     Returns:
     --------
     coarse_field : array
@@ -100,29 +100,30 @@ def coarsen_field_3d(field, coarse_shape):
     if field.ndim == 3:
         # Single component field (e.g., damage)
         fine_shape = field.shape
-        
-        # Compute stride for coarsening
-        stride_x = fine_shape[0] // coarse_shape[0]
-        stride_y = fine_shape[1] // coarse_shape[1]
-        stride_z = fine_shape[2] // coarse_shape[2]
-        
+
+        # Compute stride for coarsening 
+        stride = tuple(
+            max(1, fine_dim // coarse_dim)
+            for fine_dim, coarse_dim in zip(fine_shape, coarse_shape)
+        )
+
         # Simple averaging coarsening
         coarse = np.zeros(coarse_shape, dtype=field.dtype)
         for i in range(coarse_shape[0]):
             for j in range(coarse_shape[1]):
                 for k in range(coarse_shape[2]):
-                    i_start = i * stride_x
-                    j_start = j * stride_y
-                    k_start = k * stride_z
-                    i_end = min((i + 1) * stride_x, fine_shape[0])
-                    j_end = min((j + 1) * stride_y, fine_shape[1])
-                    k_end = min((k + 1) * stride_z, fine_shape[2])
-                    
+                    i_start = i * stride[0]
+                    j_start = j * stride[1]
+                    k_start = k * stride[2]
+                    i_end = min((i + 1) * stride[0], fine_shape[0])
+                    j_end = min((j + 1) * stride[1], fine_shape[1])
+                    k_end = min((k + 1) * stride[2], fine_shape[2])
+
                     coarse[i, j, k] = np.mean(
                         field[i_start:i_end, j_start:j_end, k_start:k_end]
                     )
         return coarse
-    
+
     elif field.ndim == 4:
         # Multi-component field (e.g., strain: 6 components)
         n_components = field.shape[0]
@@ -130,9 +131,10 @@ def coarsen_field_3d(field, coarse_shape):
         for comp in range(n_components):
             coarse[comp] = coarsen_field_3d(field[comp], coarse_shape)
         return coarse
-    
+
     else:
         raise ValueError(f"Expected 3D or 4D field, got {field.ndim}D")
+
 
 
 def refine_field_3d_to_shape(field, fine_shape):
@@ -213,8 +215,8 @@ def forward_full_response(
     mu_grid,
     strain_loading,
     stress_component_idx=0,
-    exp_resolution=None,
-    n_eval_steps=None,
+    dvc_resolution=None,
+    dvc_steps=None,
     dtype=jnp.float64,
 ):
     """
@@ -226,179 +228,84 @@ def forward_full_response(
     u: [s_gc_matrix, s_gc_particle, s_lc_matrix, s_lc_particle]
     strain_loading: list of macroscopic strain vectors
     stress_component_idx: which stress component to extract (0-5 for Voigt notation)
-    exp_resolution: tuple (nx_exp, ny_exp, nz_exp) for experimental field resolution
+    dvc_resolution: tuple (nx_exp, ny_exp, nz_exp) for experimental field resolution
                     If None, use full FFT resolution
-    n_eval_steps: number of steps to evaluate (if None, use all)
+    dvc_steps: step indices at which full-field scan / DVC were performed (if None, use all)
 
     Returns:
     --------
     dict with keys:
-        'sigma_meas': measured stress component at each step, shape (n_steps,)
-        'epsilon_field': full strain field at experimental resolution, shape (n_steps, 6, nx_exp, ny_exp, nz_exp)
-        'damage_field': damage field at experimental resolution, shape (n_steps, nx_exp, ny_exp, nz_exp)
-        'epsilon_field_full': full strain field at FFT resolution (for reference)
-        'damage_field_full': damage field at FFT resolution (for reference)
+        'sigma_macro': macroscopic stress component at each step, shape (n_steps,)
+        'strain_field': full strain field at experimental resolution, shape (n_steps_dic, 6, nx_exp, ny_exp, nz_exp)
+        'damage_field': damage field at experimental resolution, shape (n_steps_dic, nx_exp, ny_exp, nz_exp)
     """
 
-    # Map to physical parameters
     s_gc_matrix, s_gc_particle, s_lc_matrix, s_lc_particle = u
     gc_matrix = s_to_gc(s_gc_matrix)
     gc_particle = s_to_gc(s_gc_particle)
     lc_matrix = s_to_lc(s_lc_matrix)
     lc_particle = s_to_lc(s_lc_particle)
 
-    # Create spatially varying gc and lc grids
-    gc_grid, lc_grid, _, _ = init_material(
+    _, _, gc_grid, lc_grid = init_material(
         matID,
         lmbda_list=[gc_matrix, gc_particle],
-        mu_list=[lc_matrix, lc_particle],
+        mu_list=[lc_matrix, lc_particle],   #dummy values for lamdba and mu
         gc_list=[gc_matrix, gc_particle],
         lc_list=[lc_matrix, lc_particle],
         dtype=dtype,
     )
 
-    # Subsample strain loading if needed for faster evaluation
-    if n_eval_steps is not None and n_eval_steps < len(strain_loading):
-        indices = np.linspace(0, len(strain_loading) - 1, n_eval_steps, dtype=int)
-        strain_eval = [strain_loading[i] for i in indices]
-    else:
-        strain_eval = strain_loading
+    strain_dvc = [strain_loading[i] for i in dvc_steps]
 
-    n_steps = len(strain_eval)
-    save_steps = np.arange(0, n_steps)
+    n_steps = len(strain_loading)
+    n_steps_dvc = len(dvc_steps)
 
-    # Create temporary output directory
     tmp_out_dir = "/tmp/pfm_inv_sim"
     os.makedirs(tmp_out_dir, exist_ok=True)
 
-    eps_steps, sig_steps, _, epsilon_field, damage_field = solve_fracture_staggered(
+    epsAV, sigAV, _, efield, dfield = solve_fracture_staggered(
         grid,
         lmbda_grid,
         mu_grid,
         gc_grid,
         lc_grid,
-        strain_eval,
-        save_steps,
+        strain_loading,
+        dvc_steps,
         k_stab=1e-6,
         maxiter_PF=2000,
         maxiter_Elas=2000,
         out_dir=tmp_out_dir,
         earlystop=None,
-        maxiter_inner=1,
+        maxiter_inner=20,
         tolerance_inner=1e-2,
         output_fields=True,
     )
 
-    sigma_measured = sig_steps[:, stress_component_idx]  # shape (n_steps,)
+    sigma_macro = sigAV[:, stress_component_idx]  # shape (n_steps,)
 
     # Coarsen strain and damage fields to experimental resolution if specified
     fft_shape = (grid.nx, grid.ny, grid.nz)
-    if exp_resolution is not None:
-        epsilon_field_coarse_list = []
-        damage_field_coarse_list = []
+    if dvc_resolution is not None:
+        efield_coarse_list = []
+        dfield_coarse_list = []
 
-        for step in range(n_steps):
-            eps_full = np.array(eps_steps[step:step+1]).reshape(6, *fft_shape)
-            eps_coarse = coarsen_field_3d(eps_full, exp_resolution)
-            epsilon_field_coarse_list.append(eps_coarse)
-            d_full = np.array(damage_steps[step]) 
-            d_coarse = coarsen_field_3d(d_full, exp_resolution)
-            damage_field_coarse_list.append(d_coarse)
-        epsilon_field_exp = jnp.stack(epsilon_field_coarse_list, axis=0) 
-        damage_field_exp = jnp.stack(damage_field_coarse_list, axis=0)
+        for step in range(n_steps_dvc):
+            eps_coarse = coarsen_field_3d(np.array(efield[step]), dvc_resolution)
+            efield_coarse_list.append(eps_coarse)
+            d_coarse = coarsen_field_3d(np.array(dfield[step]), dvc_resolution)
+            dfield_coarse_list.append(d_coarse)
+        efield_exp = jnp.stack(efield_coarse_list, axis=0) 
+        dfield_exp = jnp.stack(dfield_coarse_list, axis=0)
     else:
-        epsilon_field_exp = epsilon_field
-        damage_field_exp = damage_steps
+        efield_exp = efield
+        dfield_exp = dfield
 
     return {
-        "sigma_meas": sigma_measured,
-        "epsilon_field": epsilon_field_exp,
-        "damage_field": damage_field_exp, 
-        "eps_steps_avg": eps_steps, 
-        "sig_steps": sig_steps, 
+        "sigma_macro": sigma_macro,
+        "strain_field": efield_exp,
+        "damage_field": dfield_exp, 
     }
 
-
-
-def residual_multimodal(
-    u,
-    grid,
-    matID,
-    lmbda_grid,
-    mu_grid,
-    strain_loading,
-    sigma_target,
-    epsilon_target,
-    damage_target,
-    stress_component_idx=0,
-    weight_sigma=1.0,
-    weight_strain=0.5,
-    weight_damage=0.5,
-    n_eval_steps=None,
-    dtype=jnp.float64,
-):
-    """
-    Multimodal residual combining:
-    1. Measured stress component (σ_measured - σ_target)
-    2. Full-field strain (ε_measured - ε_target)
-    3. Damage field (d_measured - d_target)
-
-    All residuals are normalized by their target magnitudes for balance.
-
-    Parameters:
-    -----------
-    weight_sigma : float
-        Weight for stress residual
-    weight_strain : float
-        Weight for strain residual
-    weight_damage : float
-        Weight for damage residual
-    """
-
-    response = forward_full_response(
-        u,
-        grid,
-        matID,
-        lmbda_grid,
-        mu_grid,
-        strain_loading,
-        stress_component_idx=stress_component_idx,
-        n_eval_steps=n_eval_steps,
-        dtype=dtype,
-    )
-
-    sigma_meas = response["sigma_meas"]  # (n_steps,)
-    epsilon_meas = response["eps_steps"]  # (n_steps, 6)
-    damage_field_meas = response["damage_field"] 
-    epsilon_field_meas = response["epsilon_field"]
-
-    # Residuals
-    r_sigma = sigma_meas - sigma_target  # (n_steps,)
-
-    # Flatten and normalize strain residual
-    # sigma_target and epsilon_target should have compatible shapes
-    r_strain = jnp.mean(epsilon_meas) - jnp.mean(epsilon_target)  # scalar proxy
-
-    # For damage, we'll use a placeholder (full implementation reads damage field)
-    r_damage = 0.0
-
-    # Normalize by target magnitudes
-    sigma_norm = jnp.maximum(jnp.linalg.norm(sigma_target), 1e-10)
-    strain_norm = jnp.maximum(jnp.linalg.norm(epsilon_target), 1e-10)
-    damage_norm = jnp.maximum(jnp.linalg.norm(damage_target), 1e-10)
-
-    r_sigma_normalized = weight_sigma * r_sigma / sigma_norm
-    r_strain_normalized = weight_strain * r_strain / strain_norm
-    r_damage_normalized = weight_damage * r_damage / damage_norm
-
-    # Combine residuals
-    r_total = jnp.concatenate([
-        r_sigma_normalized,
-        jnp.array([r_strain_normalized]),
-        jnp.array([r_damage_normalized]),
-    ])
-
-    return r_total
 
 
 def newton_raphson_inverse(
@@ -411,14 +318,14 @@ def newton_raphson_inverse(
     mu_grid,
     strain_loading,
     stress_component_idx=0,
-    exp_resolution=None,
+    dvc_resolution=None,
+    dvc_steps=None,
     weight_sigma=1.0,
     weight_strain=0.5,
     maxiter=15,
     tol=1e-4,
     reg=1e-6,
     damp_init=1.0,
-    n_eval_steps=None,
 ):
     """
     Newton-Raphson loop to solve r(u) = 0 where r combines:
@@ -435,8 +342,10 @@ def newton_raphson_inverse(
         Initial guess for [s_gc_matrix, s_gc_particle, s_lc_matrix, s_lc_particle]
     stress_component_idx : int
         Which stress component to use (0-5 in Voigt notation)
-    exp_resolution : tuple, optional
+    dvc_resolution : tuple, optional
         Target experimental resolution (nx_exp, ny_exp, nz_exp)
+    dvc_steps : int, optional
+        Strain loading step at which full-field strain/damage were acquired
     weight_sigma : float
         Weight for stress in combined residual
     weight_strain : float
@@ -449,13 +358,11 @@ def newton_raphson_inverse(
         Regularization parameter
     damp_init : float
         Initial damping for line search
-    n_eval_steps : int, optional
-        Subsample strain loading for speed
     """
 
     dtype = jnp.float64
 
-    u = jnp.asarray(u0, dtype=dtype)
+    u0 = jnp.asarray(u0, dtype=dtype)
     sigma_target = jnp.asarray(sigma_target, dtype=dtype)
     strain_target = jnp.asarray(strain_target, dtype=dtype)
     strain_target_flat = strain_target.reshape(strain_target.shape[0], -1).flatten()
@@ -475,97 +382,34 @@ def newton_raphson_inverse(
             mu_grid,
             strain_loading,
             stress_component_idx=stress_component_idx,
-            exp_resolution=exp_resolution,
-            n_eval_steps=n_eval_steps,
+            dvc_resolution=dvc_resolution,
+            dvc_steps=dvc_steps,
             dtype=dtype,
         )
 
-        sigma_meas = response["sigma_meas"]
-        eps_steps = response["eps_steps"]
+        sigma_macro = response["sigma_macro"]
+        efield = response["strain_field"]
 
         # Stress residual
-        r_sigma = (sigma_meas - sigma_target) / sigma_scale
+        r_sigma = (sigma_macro - sigma_target) / sigma_scale
 
         # Strain residual (flatten all components and spatial dimensions)
-        eps_flat = eps_field.reshape(eps_field.shape[0], -1).flatten()
-        r_strain = (eps_flat - strain_target_flat) / strain_scale
+        r_strain = (efield.reshape(efield.shape[0], -1).flatten() - strain_target_flat) / strain_scale
 
-        # Combine
-        r_combined = jnp.concatenate([
-            weight_sigma * r_sigma,
-            weight_strain * r_strain
-        ])
-        return r_combined
+        return jnp.concatenate([
+                   r_sigma * weight_sigma,
+                   r_strain * weight_strain
+               ])
 
-    jitted_residual = jax.jit(residual_fn)
-    jitted_jac = jax.jit(jax.jacobian(residual_fn))
-
-    history = {"res_norm": [], "u": [], "svd": []}
-
-    damp = damp_init
-
-    for k in range(maxiter):
-        print(f"\n[Iter {k}] Computing residual...")
-        r = jitted_residual(u)
-        r_norm = jnp.linalg.norm(r)
-        history["res_norm"].append(float(r_norm))
-        history["u"].append(np.array(u))
-        print(f"[Iter {k}] residual norm = {r_norm:.6e}")
-
-        if r_norm < tol:
-            print("✓ Converged!")
-            break
-
-        print(f"[Iter {k}] Computing Jacobian...")
-        J = jitted_jac(u)  # shape (m, p)
-
-        # Diagnostics
-        try:
-            sv = jnp.linalg.svd(J, compute_uv=False)
-            cond = float(sv[0] / (sv[-1] + 1e-30))
-            history["svd"].append(np.array(sv))
-            print(f"  singular values (J): {sv}")
-            print(f"  cond(J) ~ {cond:.3e}")
-        except Exception as e:
-            print(f"  SVD computation failed: {e}")
-            sv = None
-
-        # Normal equations
-        JTJ = J.T @ J
-        rhs = -J.T @ r
-        JTJ_reg = JTJ + reg * jnp.eye(JTJ.shape[0], dtype=JTJ.dtype)
-
-        # Solve
-        try:
-            delta_u = jnp.linalg.solve(JTJ_reg, rhs)
-        except Exception as e:
-            print(f"  Direct solve failed: {e}, using lstsq")
-            delta_u, *_ = jnp.linalg.lstsq(J, -r, rcond=None)
-
-        # Line search
-        alpha = damp
-        success = False
-        r_norm_current = r_norm
-        for trial in range(10):
-            u_candidate = u + alpha * delta_u
-            r_new = jitted_residual(u_candidate)
-            r_new_norm = jnp.linalg.norm(r_new)
-            if r_new_norm < r_norm_current:
-                success = True
-                print(f"  ✓ Accept step with alpha={alpha:.3f}, new residual {r_new_norm:.6e}")
-                u = u_candidate
-                reg = max(reg * 0.9, 1e-12)
-                damp = min(1.0, damp * 1.2)
-                break
-            else:
-                alpha *= 0.5
-
-        if not success:
-            print("  ✗ Line search failed; increasing regularization.")
-            reg = reg * 10.0 + 1e-12
-            u = u + 1e-2 * delta_u
-            damp = max(1e-3, damp * 0.5)
-
+    u, history = newton_raphson(
+        residual_fn,
+        u0=u0,
+        maxiter=20,
+        tol=1e-4,
+        reg_init=1e-8,
+        damp_init=1.0,
+        verbose=1,
+    )
     return u, history
 
 
@@ -592,14 +436,16 @@ if __name__ == "__main__":
     print("=" * 70)
     print("Inverse Identification for Phase-Field Fracture Model")
     print("Identifying: gc (fracture toughness) and lc (characteristic length)")
-    print("Data: Measured stress component + Full-field strain (DIC-like)")
+    print("Data: Measured macroscopic stress component + Full-field strain (DVC-like)")
     print("=" * 70)
 
     # RVE geometry
-    box_size = [0.4, 0.4, 0.4]
+    box_size = [0.4, 0.4, 0.01]
     spacing = [0.01, 0.01, 0.01]
-    n_particles = 15
+    n_particles = 8
     radius_range = [0.05, 0.08]
+    dvc_resolution = [int(L/h/5) for L,h in zip(box_size, spacing)]
+    dvc_resolution = [max(1, dim) for dim in dvc_resolution]
 
     print("\n1. Building RVE...")
     grid, matID = build_rve(box_size, spacing, n_particles, radius_range, seed=42)
@@ -644,9 +490,11 @@ if __name__ == "__main__":
     print(f"   lc_particle = {float(lc_true_particle):.6f} mm")
 
     # Uniaxial tension: strain in x-direction (e11)
-    Emean = 0.002
-    nsteps = 50
-    eps_steps = np.linspace(0.0, Emean, nsteps)
+    Emean, deps = 6.2e-4, 5e-5
+    eps_steps = np.arange(0.0, Emean, deps) + deps
+    nsteps = len(eps_steps)
+    dvc_steps = np.arange(10, nsteps-1, 20)
+    print(dvc_steps)
 
     strain_loading = [
         jnp.array([eps_xx, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float64)
@@ -654,7 +502,7 @@ if __name__ == "__main__":
     ]
 
     print(f"\n3. Generating synthetic reference data (uniaxial tension)...")
-    print(f"   Loading: {nsteps} strain steps from 0 to {Emean}")
+    print(f"   Loading: {nsteps} strain steps from {deps} to {Emean}")
     print(f"   Running forward solve with true parameters...")
 
     t0 = time.time()
@@ -666,18 +514,33 @@ if __name__ == "__main__":
         mu_grid,
         strain_loading,
         stress_component_idx=0,  # σ11 (tensile stress)
-        n_eval_steps=10,
+        dvc_resolution=dvc_resolution,
+        dvc_steps=dvc_steps,
     )
     t_fwd = time.time() - t0
     print(f"   Forward solve took {t_fwd:.2f} s")
 
-    sigma_target = response_true["sigma_meas"]  # shape (n_eval_steps,)
-    strain_target = response_true["eps_steps"]  # shape (n_eval_steps, 6)
+    sigma_target = response_true["sigma_macro"]  # shape (nsteps,)
+    strain_target = response_true["strain_field"]  # shape (nsteps_dvc, 6)
 
     print(f"   Target stress shape: {sigma_target.shape}")
     print(f"   Target strain shape: {strain_target.shape}")
     print(f"   Stress range: [{sigma_target.min():.3e}, {sigma_target.max():.3e}] MPa")
     print(f"   Strain range: [{strain_target.min():.3e}, {strain_target.max():.3e}]")
+
+    plt.figure()
+    plt.plot(eps_steps, sigma_target, "-*", label="Stress-strain curve")
+    plt.plot(
+        eps_steps[dvc_steps],
+        sigma_target[dvc_steps],
+        "o",
+        label="DVC steps",
+    )
+    plt.xlabel(r"E11")
+    plt.ylabel(r"S11")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.show()
 
     # Initial guess (perturbed from true values)
     gc_init_matrix = 5.0e-3
@@ -699,7 +562,7 @@ if __name__ == "__main__":
     print(f"\n5. Starting Newton-Raphson inverse solve...")
     print(f"   Data: Measured stress component (σ11) + Full-field strain")
     print(f"   Weights: stress={1.0}, strain={0.5}")
-    print(f"   Evaluating on {10} strain steps for speed")
+    print(f"   Evaluating on {len(dvc_steps} strain fields for speed")
 
     t0 = time.time()
     u_opt, history = newton_raphson_inverse(
@@ -711,14 +574,15 @@ if __name__ == "__main__":
         lmbda_grid,
         mu_grid,
         strain_loading,
-        stress_component_idx=0,  # σ11
+        stress_component_idx=0,
+        dvc_resolution=dvc_resolution,
+        dvc_steps=dvc_steps,
         weight_sigma=1.0,
         weight_strain=0.5,
         maxiter=10,
         tol=1e-4,
         reg=1e-6,
         damp_init=1.0,
-        n_eval_steps=10,
     )
     t_inv = time.time() - t0
 

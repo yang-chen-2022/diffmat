@@ -155,11 +155,11 @@ def solve_fracture_staggered(
         Macroscopic strain at each step, shape (n_steps, 6)
     sig_steps : array
         Macroscopic stress at each step, shape (n_steps, 6)
-    stress_steps : array or None
+    stress_field : array or None
         Local stress field (n_steps, 6, nx, ny, nz)
-    strain_steps : array or None
+    strain_field : array or None
         Local strain field (n_steps, 6, nx, ny, nz)
-    damage_steps : array or None
+    damage_field : array or None
         Local damage field (n_steps, 1, nx, ny, nz)
     """
 
@@ -187,9 +187,9 @@ def solve_fracture_staggered(
     # variable placeholder
     sig_steps = []
     eps_steps = []
-    stress_steps = [] if output_fields else None  # Only allocate if needed
-    strain_steps = [] if output_fields else None  # Only allocate if needed
-    damage_steps = [] if output_fields else None  # Only allocate if needed
+    stress_field = [] if output_fields else None  # Only allocate if needed
+    strain_field = [] if output_fields else None  # Only allocate if needed
+    damage_field = [] if output_fields else None  # Only allocate if needed
 
     # output file for macroscopic stresses & strains
     file_path = os.path.join(out_dir, "macro_curve.txt")
@@ -327,9 +327,9 @@ def solve_fracture_staggered(
             vtk_saved = True
             # Store final stress/strain/damage fields if requested
             if output_fields:
-                stress_steps.append(np.array(sigma))
-                strain_steps.append(np.array(epsilon))
-                damage_steps.append(np.array(d[None,...]))
+                stress_field.append(sigma)
+                strain_field.append(epsilon)
+                damage_field.append(d[None,...])
 
         # Early stopping condition: stop after peak stress when consistently decreasing
         break_flag = False
@@ -361,9 +361,9 @@ def solve_fracture_staggered(
                     )
                     # Store final stress/strain/damage fields if requested
                     if output_fields:
-                        stress_steps.append(np.array(sigma))
-                        strain_steps.append(np.array(epsilon))
-                        damage_steps.append(np.array(d))
+                        stress_field.append(sigma)
+                        strain_field.append(epsilon)
+                        damage_field.append(d[None,...])
 
                     print(
                         f"Early stopping at step {step}: stress norm {sig_norm:.6f} < threshold {threshold_value:.6f} "
@@ -391,10 +391,10 @@ def solve_fracture_staggered(
 
         step +=1
 
-    if output_fields and damage_steps:
-        stress_array = jnp.array(stress_steps, dtype=dtype)
-        strain_array = jnp.array(strain_steps, dtype=dtype)
-        damage_array = jnp.array(damage_steps, dtype=dtype)
+    if output_fields and damage_field:
+        stress_array = jnp.array(stress_field, dtype=dtype)
+        strain_array = jnp.array(strain_field, dtype=dtype)
+        damage_array = jnp.array(damage_field, dtype=dtype)
     else:
         stress_array = None
         strain_array = None
