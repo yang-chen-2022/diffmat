@@ -98,43 +98,39 @@ def coarsen_field_3d(field, coarse_shape):
         Coarsened field, shape matching coarse_shape or (6, *coarse_shape)
     """
     if field.ndim == 3:
-        # Single component field (e.g., damage)
         fine_shape = field.shape
-
-        # Compute stride for coarsening 
+        
         stride = tuple(
             max(1, fine_dim // coarse_dim)
             for fine_dim, coarse_dim in zip(fine_shape, coarse_shape)
         )
-
-        # Simple averaging coarsening
-        coarse = np.zeros(coarse_shape, dtype=field.dtype)
-        for i in range(coarse_shape[0]):
-            for j in range(coarse_shape[1]):
-                for k in range(coarse_shape[2]):
-                    i_start = i * stride[0]
-                    j_start = j * stride[1]
-                    k_start = k * stride[2]
-                    i_end = min((i + 1) * stride[0], fine_shape[0])
-                    j_end = min((j + 1) * stride[1], fine_shape[1])
-                    k_end = min((k + 1) * stride[2], fine_shape[2])
-
-                    coarse[i, j, k] = np.mean(
-                        field[i_start:i_end, j_start:j_end, k_start:k_end]
-                    )
+        
+        pad_x = (stride[0] * coarse_shape[0]) - fine_shape[0]
+        pad_y = (stride[1] * coarse_shape[1]) - fine_shape[1]
+        pad_z = (stride[2] * coarse_shape[2]) - fine_shape[2]
+        
+        field_padded = jnp.pad(
+            field, 
+            ((0, max(0, pad_x)), (0, max(0, pad_y)), (0, max(0, pad_z))),
+            mode='edge'
+        )
+        
+        coarse = jnp.mean(
+            field_padded[:stride[0]*coarse_shape[0], :stride[1]*coarse_shape[1], :stride[2]*coarse_shape[2]]
+            .reshape(coarse_shape[0], stride[0], coarse_shape[1], stride[1], coarse_shape[2], stride[2]),
+            axis=(1, 3, 5)
+        )
         return coarse
 
     elif field.ndim == 4:
-        # Multi-component field (e.g., strain: 6 components)
         n_components = field.shape[0]
-        coarse = np.zeros((n_components, *coarse_shape), dtype=field.dtype)
+        coarse_list = []
         for comp in range(n_components):
-            coarse[comp] = coarsen_field_3d(field[comp], coarse_shape)
-        return coarse
+            coarse_list.append(coarsen_field_3d(field[comp], coarse_shape))
+        return jnp.stack(coarse_list, axis=0)
 
     else:
         raise ValueError(f"Expected 3D or 4D field, got {field.ndim}D")
-
 
 
 def refine_field_3d_to_shape(field, fine_shape):
@@ -248,8 +244,8 @@ def forward_full_response(
 
     _, _, gc_grid, lc_grid = init_material(
         matID,
-        lmbda_list=[gc_matrix, gc_particle],
-        mu_list=[lc_matrix, lc_particle],   #dummy values for lamdba and mu
+        lmbda_list=[0., 0.],
+        mu_list=[0., 0.],   #dummy values for lambda and mu
         gc_list=[gc_matrix, gc_particle],
         lc_list=[lc_matrix, lc_particle],
         dtype=dtype,
@@ -263,7 +259,7 @@ def forward_full_response(
     tmp_out_dir = "/tmp/pfm_inv_sim"
     os.makedirs(tmp_out_dir, exist_ok=True)
 
-    epsAV, sigAV, _, efield, dfield = solve_fracture_staggered(
+    _, sigAV, _, efield, dfield = solve_fracture_staggered(
         grid,
         lmbda_grid,
         mu_grid,
@@ -283,22 +279,24 @@ def forward_full_response(
 
     sigma_macro = sigAV[:, stress_component_idx]  # shape (n_steps,)
 
-    # Coarsen strain and damage fields to experimental resolution if specified
-    fft_shape = (grid.nx, grid.ny, grid.nz)
-    if dvc_resolution is not None:
-        efield_coarse_list = []
-        dfield_coarse_list = []
-
-        for step in range(n_steps_dvc):
-            eps_coarse = coarsen_field_3d(np.array(efield[step]), dvc_resolution)
-            efield_coarse_list.append(eps_coarse)
-            d_coarse = coarsen_field_3d(np.array(dfield[step]), dvc_resolution)
-            dfield_coarse_list.append(d_coarse)
-        efield_exp = jnp.stack(efield_coarse_list, axis=0) 
-        dfield_exp = jnp.stack(dfield_coarse_list, axis=0)
-    else:
-        efield_exp = efield
-        dfield_exp = dfield
+#    # Coarsen strain and damage fields to experimental resolution if specified
+#    fft_shape = (grid.nx, grid.ny, grid.nz)
+#    if dvc_resolution is not None:
+#        efield_coarse_list = []
+#        dfield_coarse_list = []
+#
+#        for step in range(n_steps_dvc):
+#            eps_coarse = coarsen_field_3d(efield[step], dvc_resolution)
+#            efield_coarse_list.append(eps_coarse)
+#            d_coarse = coarsen_field_3d(dfield[step], dvc_resolution)
+#            dfield_coarse_list.append(d_coarse)
+#        efield_exp = jnp.stack(efield_coarse_list, axis=0) 
+#        dfield_exp = jnp.stack(dfield_coarse_list, axis=0)
+#    else:
+#        efield_exp = efield
+#        dfield_exp = dfield
+    efield_exp = efield
+    dfield_exp = dfield
 
     return {
         "sigma_macro": sigma_macro,
@@ -432,6 +430,13 @@ def unpack_u_to_physical(u):
     return gc_matrix, gc_particle, lc_matrix, lc_particle
 
 
+########################################
+########################################
+########################################
+########################################
+########################################
+########################################
+
 if __name__ == "__main__":
     print("=" * 70)
     print("Inverse Identification for Phase-Field Fracture Model")
@@ -494,7 +499,7 @@ if __name__ == "__main__":
     eps_steps = np.arange(0.0, Emean, deps) + deps
     nsteps = len(eps_steps)
     dvc_steps = np.arange(10, nsteps-1, 20)
-    print(dvc_steps)
+    nsteps_dvc = len(dvc_steps)
 
     strain_loading = [
         jnp.array([eps_xx, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float64)
@@ -520,8 +525,8 @@ if __name__ == "__main__":
     t_fwd = time.time() - t0
     print(f"   Forward solve took {t_fwd:.2f} s")
 
-    sigma_target = response_true["sigma_macro"]  # shape (nsteps,)
-    strain_target = response_true["strain_field"]  # shape (nsteps_dvc, 6)
+    sigma_target = jax.lax.stop_gradient(response_true["sigma_macro"])  # shape (nsteps,)
+    strain_target = jax.lax.stop_gradient(response_true["strain_field"])  # shape (nsteps_dvc, 6)
 
     print(f"   Target stress shape: {sigma_target.shape}")
     print(f"   Target strain shape: {strain_target.shape}")
@@ -562,7 +567,7 @@ if __name__ == "__main__":
     print(f"\n5. Starting Newton-Raphson inverse solve...")
     print(f"   Data: Measured stress component (σ11) + Full-field strain")
     print(f"   Weights: stress={1.0}, strain={0.5}")
-    print(f"   Evaluating on {len(dvc_steps} strain fields for speed")
+    print(f"   Evaluating on {nsteps_dvc} strain fields from DVC")
 
     t0 = time.time()
     u_opt, history = newton_raphson_inverse(
