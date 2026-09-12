@@ -1,7 +1,13 @@
 import jax
 from jax import numpy as jnp
 
-from diffmat.fracture.solve_one_step import solve_one_load_step
+from diffmat.fracture.solve_one_step import (
+    LoadConditions,
+    MaterialParams,
+    SolverConfig,
+    StateVariables,
+    solve_one_load_step,
+)
 from diffmat.fracture.constitutive import compute_sigma_damaged, compute_strain_energy
 
 from functools import partial
@@ -48,9 +54,29 @@ def solve_loading_history(
     lmbda0 = jax.lax.stop_gradient(0.5 * (lmbda.max() + lmbda.min()))
     mu0 = jax.lax.stop_gradient(0.5 * (mu.max() + mu.min()))
 
+    material_params = MaterialParams(
+        lmbda=lmbda,
+        mu=mu,
+        gc=gc,
+        lc=lc,
+        lmbda0=lmbda0,
+        mu0=mu0,
+        k_stab=k_stab,
+    )
+    solver_cfg = SolverConfig(
+        grid=grid,
+        maxiter_PF=maxiter_PF,
+        maxiter_Elas=maxiter_Elas,
+        maxiter_inner=maxiter_inner,
+        tolerance_inner=tolerance_inner,
+    )
+
     def step_fn(carry, Emean):
 
         d, epsilon, HH = carry
+
+        load_conditions = LoadConditions(Emean=Emean)
+        state_variables = StateVariables(HH=HH)
 
         (
             d,
@@ -60,22 +86,10 @@ def solve_loading_history(
                 d,
                 epsilon,
             ),
-            (
-                lmbda,
-                mu,
-                gc,
-                lc,
-                Emean,
-                HH,
-                grid,
-                lmbda0,
-                mu0,
-                k_stab,
-                maxiter_PF,
-                maxiter_Elas,
-            ), 
-            maxiter_inner,
-            tolerance_inner,
+            material_params,
+            load_conditions,
+            state_variables,
+            solver_cfg,
         )
 
         sigma = compute_sigma_damaged(
@@ -110,5 +124,4 @@ def solve_loading_history(
     )
 
     return outputs
-
 
