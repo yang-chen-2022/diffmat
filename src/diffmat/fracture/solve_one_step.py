@@ -162,7 +162,10 @@ def staggered_step(
         verbose=solver_cfg.verbose,
     )
 
-    mean_strain = load_conditions.Emean.reshape(load_conditions.Emean.shape + (1, 1, 1))
+    mean_strain = jnp.broadcast_to(
+        load_conditions.Emean[:, None, None, None],
+        epsilon.shape,
+    )
     depsilon = epsilon - mean_strain
 
     epsilon_new, _ = lippmann_schwinger(
