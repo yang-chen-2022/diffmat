@@ -70,7 +70,7 @@ class StateVariables:
         return cls(*children)
 
 
-@jax.tree_util.register_static
+@jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True, eq=False)
 class SolverConfig:
     grid: Any
@@ -81,6 +81,23 @@ class SolverConfig:
     phase_field_tolerance: float = 1e-5
     elasticity_tolerance: float = 1e-2
     verbose: int = 0
+
+    def tree_flatten(self):
+        return (), (
+            self.grid,
+            self.maxiter_PF,
+            self.maxiter_Elas,
+            self.maxiter_inner,
+            self.tolerance_inner,
+            self.phase_field_tolerance,
+            self.elasticity_tolerance,
+            self.verbose,
+        )
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        del children
+        return cls(*aux_data)
 
 
 
