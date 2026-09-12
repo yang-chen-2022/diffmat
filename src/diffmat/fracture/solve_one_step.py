@@ -73,6 +73,8 @@ class StateVariables:
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True, eq=False)
 class SolverConfig:
+    """Static fracture-solver settings carried outside differentiated state."""
+
     grid: Any
     maxiter_PF: int
     maxiter_Elas: int
@@ -160,7 +162,7 @@ def staggered_step(
         verbose=solver_cfg.verbose,
     )
 
-    mean_strain = load_conditions.Emean[:, None, None, None]
+    mean_strain = load_conditions.Emean.reshape((6, 1, 1, 1))
     depsilon = epsilon - mean_strain
 
     epsilon_new, _ = lippmann_schwinger(
