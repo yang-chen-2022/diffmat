@@ -1,6 +1,44 @@
 
 import jax
 from jax import numpy as jnp
+from jax.scipy.sparse.linalg import gmres
+from jaxmaterials.solver.lippmann_schwinger import lippmann_schwinger
+from diffmat.fracture.constitutive import compute_sigma_damaged, compute_strain_energy
+from diffmat.fracture.utilities import voigt_to_tensor, tensor_to_voigt
+from diffmat.fracture.lippmann_schwinger import solve
+
+
+
+# @jax.jit(static_argnames=["grid", "tolerance", "maxiter"])
+def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000, verbose=0):
+    """Fixed-point iteration solver for phase-field problem (fracture)
+
+    :arg HH: history strain energy (field), (1, Nx, Ny, Nz)
+    :arg d_old: damage variable at previous time step (field), (1, Nx, Ny, Nz)
+    :arg gc: fracture toughness (field), (1, Nx, Ny, Nz)
+    :arg lc: regularisation length (field)), (1, Nx, Ny, Nz)
+    :arg grid: grid specs
+    :arg tolerance: tolerance for convergence check
+    :arg maxiter: maximal number of iterations
+    """
+
+    # Coefficients A^t_n and B^t_n
+    A_n = 1.0 / (lc**2) + 2.0 * HH / (gc * lc)
+    B_n = 2.0 * HH / (gc * lc)
+
+    d_final = solve(
+        B_n, 
+        A_n, 
+        grid, 
+        u_in=jax.lax.stop_gradient(d_old), 
+        tol=tolerance, 
+        maxits=maxiter, 
+        verbose=verbose
+    )
+
+    return d_final
+
+
 
 def staggered_step(
     x,
@@ -50,7 +88,7 @@ def staggered_step(
         E_mean,
         delta_epsilon_initial=depsilon,
         ref_params={
-            "lambda": lmbda0
+            "lambda": lmbda0,
             "mu": mu0,
         },
         grid_spec=grid,
@@ -258,7 +296,7 @@ def solve_bwd(
 
     _, pullback = jax.vjp(
             lambda p:
-                stagered_step(
+                staggered_step(
                     x_star,
                     p
                 ),
