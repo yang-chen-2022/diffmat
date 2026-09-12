@@ -160,8 +160,9 @@ def staggered_step(
         verbose=solver_cfg.verbose,
     )
 
-    mean_strain = load_conditions.Emean.reshape(
-        (load_conditions.Emean.shape[0],) + (1,) * (epsilon.ndim - 1)
+    mean_strain = jnp.expand_dims(
+        load_conditions.Emean,
+        axis=tuple(range(1, epsilon.ndim)),
     )
     depsilon = epsilon - mean_strain
 
