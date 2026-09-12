@@ -1,11 +1,110 @@
 
+import functools
+from dataclasses import dataclass
+from typing import Any
+
 import jax
 from jax import numpy as jnp
+from jax.flatten_util import ravel_pytree
 from jax.scipy.sparse.linalg import gmres
 from jaxmaterials.solver.lippmann_schwinger import lippmann_schwinger
+
 from diffmat.fracture.constitutive import compute_sigma_damaged, compute_strain_energy
-from diffmat.fracture.utilities import voigt_to_tensor, tensor_to_voigt
 from diffmat.fracture.lippmann_schwinger import solve
+from diffmat.fracture.utilities import voigt_to_tensor, tensor_to_voigt
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass
+class MaterialParams:
+    lmbda: jnp.ndarray
+    mu: jnp.ndarray
+    gc: jnp.ndarray
+    lc: jnp.ndarray
+
+    def tree_flatten(self):
+        return (
+            (
+                self.lmbda,
+                self.mu,
+                self.gc,
+                self.lc,
+            ),
+            None,
+        )
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass
+class LoadConditions:
+    Emean: jnp.ndarray
+
+    def tree_flatten(self):
+        return ((self.Emean,), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass
+class StateVariables:
+    HH: jnp.ndarray
+
+    def tree_flatten(self):
+        return ((self.HH,), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass(frozen=True, eq=False)
+class SolverConfig:
+    """Static fracture-solver settings carried outside differentiated state."""
+
+    grid: Any
+    lmbda0: jnp.ndarray
+    mu0: jnp.ndarray
+    k_stab: float
+    maxiter_PF: int
+    maxiter_Elas: int
+    maxiter_inner: int
+    tolerance_inner: float
+    phase_field_tolerance: float = 1e-5
+    elasticity_tolerance: float = 1e-2
+    AA_depth: int = 4
+    verbose: int = 0
+
+    def tree_flatten(self):
+        return (
+            (
+                self.lmbda0,
+                self.mu0,
+                self.k_stab,
+            ),
+            (
+            self.grid,
+                self.maxiter_PF,
+                self.maxiter_Elas,
+                self.maxiter_inner,
+                self.tolerance_inner,
+                self.phase_field_tolerance,
+                self.elasticity_tolerance,
+                self.AA_depth,
+                self.verbose,
+            ),
+        )
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(aux_data[0], *children, *aux_data[1:])
 
 
 
@@ -42,60 +141,53 @@ def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000, ver
 
 def staggered_step(
     x,
-    params,
+    material_params: MaterialParams,
+    load_conditions: LoadConditions,
+    state_variables: StateVariables,
+    solver_cfg: SolverConfig,
 ):
 
     d, epsilon = x
 
-    (
-        lmbda,
-        mu,
-        gc,
-        lc,
-        Emean,
-        HH,
-        grid,
-        lmbda0,
-        mu0,
-        k_stab,
-        maxiter_PF,
-        maxiter_Elas,
-    ) = params
-
     psi = compute_strain_energy(
-        lmbda,
-        mu,
+        material_params.lmbda,
+        material_params.mu,
         epsilon,
     )
-    HH_inner = jnp.maximum(HH, jax.lax.stop_gradient(psi))
+    HH_inner = jnp.maximum(state_variables.HH, jax.lax.stop_gradient(psi))
 
     d_new = phase_field_solve(
         HH_inner,
         d,
-        gc,
-        lc,
-        grid,
-        tolerance=1e-5,
-        maxiter=maxiter_PF,
-        verbose=0,
+        material_params.gc,
+        material_params.lc,
+        solver_cfg.grid,
+        tolerance=solver_cfg.phase_field_tolerance,
+        maxiter=solver_cfg.maxiter_PF,
+        verbose=solver_cfg.verbose,
     )
 
-    depsilon = epsilon - E_mean[:, None, None, None]
+    depsilon = epsilon - load_conditions.Emean[:, None, None, None]
 
     epsilon_new, _ = lippmann_schwinger(
         compute_sigma_damaged,
-        (lmbda, mu, d_new, k_stab),
-        E_mean,
+        (
+            material_params.lmbda,
+            material_params.mu,
+            d_new,
+            solver_cfg.k_stab,
+        ),
+        load_conditions.Emean,
         delta_epsilon_initial=depsilon,
         ref_params={
-            "lambda": lmbda0,
-            "mu": mu0,
+            "lambda": solver_cfg.lmbda0,
+            "mu": solver_cfg.mu0,
         },
-        grid_spec=grid,
-        tol=1e-2,
-        maxits=maxiter_Elas,
-        verbose=0,
-        depth=4,
+        grid_spec=solver_cfg.grid,
+        tol=solver_cfg.elasticity_tolerance,
+        maxits=solver_cfg.maxiter_Elas,
+        verbose=solver_cfg.verbose,
+        depth=solver_cfg.AA_depth,
     )
 
     return (
@@ -107,16 +199,17 @@ def staggered_step(
 
 def inner_fixed_point(
     x0,
-    params,
-    maxiter_inner,
-    tolerance_inner,
+    material_params: MaterialParams,
+    load_conditions: LoadConditions,
+    state_variables: StateVariables,
+    solver_cfg: SolverConfig,
 ):
 
     def cond_fn(state):
 
         i, x, converged = state
 
-        return (i < maxiter_inner) & (~converged)
+        return (i < solver_cfg.maxiter_inner) & (~converged)
 
     def body_fn(state):
 
@@ -124,7 +217,10 @@ def inner_fixed_point(
 
         x_new = staggered_step(
             x,
-            params,
+            material_params,
+            load_conditions,
+            state_variables,
+            solver_cfg,
         )
 
         d, epsilon = x
@@ -172,9 +268,9 @@ def inner_fixed_point(
         )
 
         converged = (
-            strain_change < tolerance_inner
+            strain_change < solver_cfg.tolerance_inner
         ) & (
-            damage_change < tolerance_inner
+            damage_change < solver_cfg.tolerance_inner
         )
 
         return (
@@ -197,55 +293,44 @@ def inner_fixed_point(
 
     return x_star
 
-
-
-def residual(
-    x,
-    params,
-):
-    Fx = staggered_step(
-        x,
-        params,
-    )
-
-    return jax.tree.map(
-        lambda a, b: a - b,
-        Fx,
-        x,
-    )
-
-
 @jax.custom_vjp
 def solve_one_load_step(
     x0,
-    params,
-    maxiter_inner,
-    tolerance_inner,
+    material_params: MaterialParams,
+    load_conditions: LoadConditions,
+    state_variables: StateVariables,
+    solver_cfg: SolverConfig,
 ):
     return inner_fixed_point(
         x0,
-        params,
-        maxiter_inner,
-        tolerance_inner,
+        material_params,
+        load_conditions,
+        state_variables,
+        solver_cfg,
     )
 
 def solve_fwd(
     x0,
-    params,
-    maxiter_inner,
-    tolerance_inner,
+    material_params: MaterialParams,
+    load_conditions: LoadConditions,
+    state_variables: StateVariables,
+    solver_cfg: SolverConfig,
 ):
 
     x_star = inner_fixed_point(
         x0,
-        params,
-        maxiter_inner,
-        tolerance_inner,
+        material_params,
+        load_conditions,
+        state_variables,
+        solver_cfg,
     )
 
     return x_star, (
         x_star,
-        params,
+        material_params,
+        load_conditions,
+        state_variables,
+        solver_cfg,
     )
 
 def solve_bwd(
@@ -253,15 +338,17 @@ def solve_bwd(
     g,
 ):
 
-    x_star, params = residuals
+    x_star, material_params, load_conditions, state_variables, solver_cfg = residuals
 
     def JT_lambda(v):
 
         _, pullback = jax.vjp(
-            lambda x:
-            staggered_step(
+            lambda x: staggered_step(
                 x,
-                params,
+                material_params,
+                load_conditions,
+                state_variables,
+                solver_cfg,
             ),
             x_star,
         )
@@ -275,7 +362,7 @@ def solve_bwd(
             JTv,
         )
 
-    rhs, unravel = jax.flatten_util.ravel_pytree(g)
+    rhs, unravel = ravel_pytree(g)
 
     def linear_operator(vec):
 
@@ -283,7 +370,7 @@ def solve_bwd(
 
         out = JT_lambda(tree)
 
-        flat, _ = jax.flatten_util.ravel_pytree(out)
+        flat, _ = ravel_pytree(out)
 
         return flat
 
@@ -295,20 +382,25 @@ def solve_bwd(
     lam = unravel(lam_flat)
 
     _, pullback = jax.vjp(
-            lambda p:
-                staggered_step(
-                    x_star,
-                    p
-                ),
-        params,
+        lambda mp, lc, sv: staggered_step(
+            x_star,
+            mp,
+            lc,
+            sv,
+            solver_cfg,
+        ),
+        material_params,
+        load_conditions,
+        state_variables,
     )
 
-    param_bar = pullback(lam)[0]
+    material_bar, load_bar, state_bar = pullback(lam)
 
     return (
         jax.tree.map(jnp.zeros_like, x_star),
-        param_bar,
-        None,
+        material_bar,
+        load_bar,
+        state_bar,
         None,
     )
 
@@ -316,4 +408,3 @@ solve_one_load_step.defvjp(
     solve_fwd,
     solve_bwd,
 )
-
