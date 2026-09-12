@@ -83,8 +83,8 @@ class SolverConfig:
     verbose: int = 0
 
     def tree_flatten(self):
-        return (), (
-            self.grid,
+        return (
+            (
             self.maxiter_PF,
             self.maxiter_Elas,
             self.maxiter_inner,
@@ -92,12 +92,13 @@ class SolverConfig:
             self.phase_field_tolerance,
             self.elasticity_tolerance,
             self.verbose,
+            ),
+            self.grid,
         )
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        del children
-        return cls(*aux_data)
+        return cls(aux_data, *children)
 
 
 
