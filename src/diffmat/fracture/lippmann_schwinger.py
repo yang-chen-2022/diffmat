@@ -6,7 +6,7 @@ import functools
 
 @functools.partial(
     jax.custom_vjp,
-    nondiff_argnames=("grid_spec", "u_in", "tol", "maxits", "verbose"),
+    nondiff_argnames=("grid_spec", "tol", "maxits", "verbose"),
 )
 def solve(b_rhs, a, grid_spec, u_in=None, tol=1e-6, maxits=1000, verbose=0):
     """Lippmann-Schwinger iteration for the scalar second order problem
@@ -125,7 +125,7 @@ def solve_fwd(b_rhs, a, grid_spec, u_in, tol, maxits, verbose):
     return out, (a, out)
 
 
-def solve_bwd(grid_spec, u_in, tol, maxits, verbose, res, gradients):
+def solve_bwd(grid_spec, tol, maxits, verbose, res, gradients):
     """Forward solve
 
     :arg b_rhs: right hand side (field) (1, Nx, Ny, Nz)

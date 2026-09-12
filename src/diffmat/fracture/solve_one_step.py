@@ -178,7 +178,8 @@ def staggered_step(
             solver_cfg.k_stab,
         ),
         load_conditions.Emean,
-        delta_epsilon_initial=depsilon,
+        #delta_epsilon_initial=depsilon, #TODO:JaxMaterials has an if condition, which causes Tracer issue
+        delta_epsilon_initial=None,
         ref_params={
             "lambda": solver_cfg.lmbda0,
             "mu": solver_cfg.mu0,

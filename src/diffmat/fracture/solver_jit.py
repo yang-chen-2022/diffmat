@@ -18,6 +18,7 @@ from functools import partial
     jax.jit,
     static_argnames=(
         "grid",
+        "k_stab",
         "maxiter_PF",
         "maxiter_Elas",
         "maxiter_inner",
@@ -32,11 +33,11 @@ def solve_loading_history(
     gc,
     lc,
     grid,
-    k_stab,
-    maxiter_PF,
-    maxiter_Elas,
-    maxiter_inner,
-    tolerance_inner,
+    k_stab=1e-6,
+    maxiter_PF=1000,
+    maxiter_Elas=1000,
+    maxiter_inner=1,
+    tolerance_inner=1e-3,
     AA_depth=4,
 ):
 
