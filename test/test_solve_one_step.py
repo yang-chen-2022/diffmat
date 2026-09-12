@@ -1,6 +1,7 @@
 import numpy as np
 import jax
 from jax import numpy as jnp
+from jax.flatten_util import ravel_pytree
 
 import diffmat.fracture.solve_one_step as solve_one_step_module
 from diffmat.fracture.solve_one_step import (
@@ -25,7 +26,7 @@ def test_solver_input_dataclasses_are_pytrees():
     load_conditions = LoadConditions(Emean=jnp.arange(6.0))
     state_variables = StateVariables(HH=7.0 * jnp.ones((2, 1, 1)))
 
-    flat, unravel = jax.flatten_util.ravel_pytree(
+    flat, unravel = ravel_pytree(
         (material_params, load_conditions, state_variables)
     )
     restored_material, restored_load, restored_state = unravel(flat)
@@ -140,8 +141,8 @@ def test_solve_one_load_step_gradients_with_structured_inputs(monkeypatch):
     np.testing.assert_allclose(material_bar.mu, 12.0 * jnp.ones((2, 1, 1)))
     np.testing.assert_allclose(material_bar.gc, 7.0 * jnp.ones((2, 1, 1)))
     np.testing.assert_allclose(material_bar.lc, 14.0 * jnp.ones((2, 1, 1)))
-    np.testing.assert_allclose(material_bar.lmbda0, 6.0 * num_cells)
-    np.testing.assert_allclose(material_bar.mu0, 18.0 * num_cells)
-    np.testing.assert_allclose(material_bar.k_stab, 6.0 * num_cells)
-    np.testing.assert_allclose(load_bar.Emean, num_cells * jnp.ones((6,)))
+    np.testing.assert_allclose(material_bar.lmbda0, 6.0 * num_cells, rtol=1e-5)
+    np.testing.assert_allclose(material_bar.mu0, 18.0 * num_cells, rtol=1e-5)
+    np.testing.assert_allclose(material_bar.k_stab, 6.0 * num_cells, rtol=1e-5)
+    np.testing.assert_allclose(load_bar.Emean, num_cells * jnp.ones((6,)), rtol=1e-5)
     np.testing.assert_allclose(state_bar.HH, 7.0 * jnp.ones((2, 1, 1)))

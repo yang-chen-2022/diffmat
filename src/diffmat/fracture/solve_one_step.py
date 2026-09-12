@@ -5,6 +5,7 @@ from typing import Any
 
 import jax
 from jax import numpy as jnp
+from jax.flatten_util import ravel_pytree
 from jax.scipy.sparse.linalg import gmres
 from jaxmaterials.solver.lippmann_schwinger import lippmann_schwinger
 
@@ -361,7 +362,7 @@ def solve_bwd(
             JTv,
         )
 
-    rhs, unravel = jax.flatten_util.ravel_pytree(g)
+    rhs, unravel = ravel_pytree(g)
 
     def linear_operator(vec):
 
@@ -369,7 +370,7 @@ def solve_bwd(
 
         out = JT_lambda(tree)
 
-        flat, _ = jax.flatten_util.ravel_pytree(out)
+        flat, _ = ravel_pytree(out)
 
         return flat
 
