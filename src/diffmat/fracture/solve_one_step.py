@@ -21,9 +21,6 @@ class MaterialParams:
     mu: jnp.ndarray
     gc: jnp.ndarray
     lc: jnp.ndarray
-    lmbda0: jnp.ndarray
-    mu0: jnp.ndarray
-    k_stab: float
 
     def tree_flatten(self):
         return (
@@ -32,9 +29,6 @@ class MaterialParams:
                 self.mu,
                 self.gc,
                 self.lc,
-                self.lmbda0,
-                self.mu0,
-                self.k_stab,
             ),
             None,
         )
@@ -76,30 +70,41 @@ class SolverConfig:
     """Static fracture-solver settings carried outside differentiated state."""
 
     grid: Any
+    lmbda0: jnp.ndarray
+    mu0: jnp.ndarray
+    k_stab: float
     maxiter_PF: int
     maxiter_Elas: int
     maxiter_inner: int
     tolerance_inner: float
     phase_field_tolerance: float = 1e-5
     elasticity_tolerance: float = 1e-2
+    AA_depth: int = 4
     verbose: int = 0
 
     def tree_flatten(self):
-        return (), (
+        return (
+            (
+                self.lmbda0,
+                self.mu0,
+                self.k_stab,
+            ),
+            (
             self.grid,
-            self.maxiter_PF,
-            self.maxiter_Elas,
-            self.maxiter_inner,
-            self.tolerance_inner,
-            self.phase_field_tolerance,
-            self.elasticity_tolerance,
-            self.verbose,
+                self.maxiter_PF,
+                self.maxiter_Elas,
+                self.maxiter_inner,
+                self.tolerance_inner,
+                self.phase_field_tolerance,
+                self.elasticity_tolerance,
+                self.AA_depth,
+                self.verbose,
+            ),
         )
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        del children
-        return cls(*aux_data)
+        return cls(aux_data[0], *children, *aux_data[1:])
 
 
 
@@ -162,11 +167,7 @@ def staggered_step(
         verbose=solver_cfg.verbose,
     )
 
-    mean_strain = jnp.broadcast_to(
-        load_conditions.Emean[:, None, None, None],
-        epsilon.shape,
-    )
-    depsilon = epsilon - mean_strain
+    depsilon = epsilon - load_conditions.Emean[:, None, None, None]
 
     epsilon_new, _ = lippmann_schwinger(
         compute_sigma_damaged,
@@ -174,19 +175,19 @@ def staggered_step(
             material_params.lmbda,
             material_params.mu,
             d_new,
-            material_params.k_stab,
+            solver_cfg.k_stab,
         ),
         load_conditions.Emean,
         delta_epsilon_initial=depsilon,
         ref_params={
-            "lambda": material_params.lmbda0,
-            "mu": material_params.mu0,
+            "lambda": solver_cfg.lmbda0,
+            "mu": solver_cfg.mu0,
         },
         grid_spec=solver_cfg.grid,
         tol=solver_cfg.elasticity_tolerance,
         maxits=solver_cfg.maxiter_Elas,
         verbose=solver_cfg.verbose,
-        depth=4,
+        depth=solver_cfg.AA_depth,
     )
 
     return (
@@ -291,30 +292,6 @@ def inner_fixed_point(
     )
 
     return x_star
-
-
-
-def residual(
-    x,
-    material_params: MaterialParams,
-    load_conditions: LoadConditions,
-    state_variables: StateVariables,
-    solver_cfg: SolverConfig,
-):
-    Fx = staggered_step(
-        x,
-        material_params,
-        load_conditions,
-        state_variables,
-        solver_cfg,
-    )
-
-    return jax.tree.map(
-        lambda a, b: a - b,
-        Fx,
-        x,
-    )
-
 
 @jax.custom_vjp
 def solve_one_load_step(

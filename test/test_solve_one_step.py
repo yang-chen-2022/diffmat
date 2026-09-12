@@ -19,9 +19,6 @@ def test_solver_input_dataclasses_are_pytrees():
         mu=jnp.ones((2, 1, 1)),
         gc=2.0 * jnp.ones((2, 1, 1)),
         lc=3.0 * jnp.ones((2, 1, 1)),
-        lmbda0=jnp.array(4.0),
-        mu0=jnp.array(5.0),
-        k_stab=jnp.array(6.0),
     )
     load_conditions = LoadConditions(Emean=jnp.arange(6.0))
     state_variables = StateVariables(HH=7.0 * jnp.ones((2, 1, 1)))
@@ -69,7 +66,8 @@ def test_solve_one_load_step_gradients_with_structured_inputs(monkeypatch):
         verbose,
         depth,
     ):
-        del constitutive_model, delta_epsilon_initial, grid_spec, tol, maxits, verbose, depth
+        del constitutive_model, delta_epsilon_initial, grid_spec, tol, maxits, verbose
+        assert depth == 3
         lmbda, mu, d_new, k_stab = params
         epsilon = (
             Emean[:, None, None, None]
@@ -107,18 +105,19 @@ def test_solve_one_load_step_gradients_with_structured_inputs(monkeypatch):
         mu=2.0 * jnp.ones((2, 1, 1)),
         gc=3.0 * jnp.ones((2, 1, 1)),
         lc=4.0 * jnp.ones((2, 1, 1)),
-        lmbda0=jnp.array(5.0),
-        mu0=jnp.array(6.0),
-        k_stab=jnp.array(7.0),
     )
     load_conditions = LoadConditions(Emean=jnp.arange(6.0))
     state_variables = StateVariables(HH=jnp.ones((2, 1, 1)))
     solver_cfg = SolverConfig(
         grid=("dummy-grid",),
+        lmbda0=jnp.array(5.0),
+        mu0=jnp.array(6.0),
+        k_stab=jnp.array(7.0),
         maxiter_PF=1,
         maxiter_Elas=1,
         maxiter_inner=1,
         tolerance_inner=1e-6,
+        AA_depth=3,
     )
 
     def loss_fn(material_params, load_conditions, state_variables, solver_cfg):
@@ -149,8 +148,5 @@ def test_solve_one_load_step_gradients_with_structured_inputs(monkeypatch):
     np.testing.assert_allclose(material_bar.mu, 12.0 * jnp.ones((2, 1, 1)))
     np.testing.assert_allclose(material_bar.gc, 7.0 * jnp.ones((2, 1, 1)))
     np.testing.assert_allclose(material_bar.lc, 14.0 * jnp.ones((2, 1, 1)))
-    np.testing.assert_allclose(material_bar.lmbda0, 6.0 * num_cells, rtol=1e-5)
-    np.testing.assert_allclose(material_bar.mu0, 18.0 * num_cells, rtol=1e-5)
-    np.testing.assert_allclose(material_bar.k_stab, 6.0 * num_cells, rtol=1e-5)
     np.testing.assert_allclose(load_bar.Emean, num_cells * jnp.ones((6,)), rtol=1e-5)
     np.testing.assert_allclose(state_bar.HH, 7.0 * jnp.ones((2, 1, 1)))

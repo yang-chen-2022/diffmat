@@ -21,6 +21,8 @@ from functools import partial
         "maxiter_PF",
         "maxiter_Elas",
         "maxiter_inner",
+        "tolerance_inner",
+        "AA_depth",
     ),
 )
 def solve_loading_history(
@@ -35,6 +37,7 @@ def solve_loading_history(
     maxiter_Elas,
     maxiter_inner,
     tolerance_inner,
+    AA_depth=4,
 ):
 
     dtype = lmbda.dtype
@@ -59,16 +62,17 @@ def solve_loading_history(
         mu=mu,
         gc=gc,
         lc=lc,
-        lmbda0=lmbda0,
-        mu0=mu0,
-        k_stab=k_stab,
     )
     solver_cfg = SolverConfig(
         grid=grid,
+        lmbda0=lmbda0,
+        mu0=mu0,
+        k_stab=k_stab,
         maxiter_PF=maxiter_PF,
         maxiter_Elas=maxiter_Elas,
         maxiter_inner=maxiter_inner,
         tolerance_inner=tolerance_inner,
+        AA_depth=AA_depth,
     )
 
     def step_fn(carry, Emean):
@@ -94,7 +98,7 @@ def solve_loading_history(
 
         sigma = compute_sigma_damaged(
                 epsilon,
-                (lmbda, mu, d, k_stab),
+                (lmbda, mu, d, solver_cfg.k_stab),
             )
 
         psi = compute_strain_energy(
@@ -124,4 +128,3 @@ def solve_loading_history(
     )
 
     return outputs
-
