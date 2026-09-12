@@ -70,7 +70,7 @@ class StateVariables:
         return cls(*children)
 
 
-@dataclass
+@dataclass(frozen=True, eq=False)
 class SolverConfig:
     grid: Any
     maxiter_PF: int
@@ -140,7 +140,10 @@ def staggered_step(
         verbose=solver_cfg.verbose,
     )
 
-    depsilon = epsilon - load_conditions.Emean[:, None, None, None]
+    mean_strain = load_conditions.Emean.reshape(
+        (load_conditions.Emean.shape[0],) + (1,) * (epsilon.ndim - 1)
+    )
+    depsilon = epsilon - mean_strain
 
     epsilon_new, _ = lippmann_schwinger(
         compute_sigma_damaged,
