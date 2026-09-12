@@ -78,6 +78,8 @@ class SolverConfig:
     maxiter_Elas: int
     maxiter_inner: int
     tolerance_inner: float
+    phase_field_tolerance: float = 1e-5
+    elasticity_tolerance: float = 1e-2
     verbose: int = 0
 
     def tree_flatten(self):
@@ -87,6 +89,8 @@ class SolverConfig:
             self.maxiter_Elas,
             self.maxiter_inner,
             self.tolerance_inner,
+            self.phase_field_tolerance,
+            self.elasticity_tolerance,
             self.verbose,
         )
 
@@ -151,7 +155,7 @@ def staggered_step(
         material_params.gc,
         material_params.lc,
         solver_cfg.grid,
-        tolerance=1e-5,
+        tolerance=solver_cfg.phase_field_tolerance,
         maxiter=solver_cfg.maxiter_PF,
         verbose=solver_cfg.verbose,
     )
@@ -176,7 +180,7 @@ def staggered_step(
             "mu": material_params.mu0,
         },
         grid_spec=solver_cfg.grid,
-        tol=1e-2,
+        tol=solver_cfg.elasticity_tolerance,
         maxits=solver_cfg.maxiter_Elas,
         verbose=solver_cfg.verbose,
         depth=4,
