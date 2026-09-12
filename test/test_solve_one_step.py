@@ -25,18 +25,29 @@ def test_solver_input_dataclasses_are_pytrees():
     )
     load_conditions = LoadConditions(Emean=jnp.arange(6.0))
     state_variables = StateVariables(HH=7.0 * jnp.ones((2, 1, 1)))
+    solver_cfg = SolverConfig(
+        grid=object(),
+        maxiter_PF=1,
+        maxiter_Elas=2,
+        maxiter_inner=3,
+        tolerance_inner=1e-6,
+        verbose=4,
+    )
 
     flat, unravel = ravel_pytree(
-        (material_params, load_conditions, state_variables)
+        (material_params, load_conditions, state_variables, solver_cfg)
     )
-    restored_material, restored_load, restored_state = unravel(flat)
+    restored_material, restored_load, restored_state, restored_solver_cfg = unravel(flat)
 
     assert isinstance(restored_material, MaterialParams)
     assert isinstance(restored_load, LoadConditions)
     assert isinstance(restored_state, StateVariables)
+    assert isinstance(restored_solver_cfg, SolverConfig)
     np.testing.assert_allclose(restored_material.lmbda, material_params.lmbda)
     np.testing.assert_allclose(restored_load.Emean, load_conditions.Emean)
     np.testing.assert_allclose(restored_state.HH, state_variables.HH)
+    assert restored_solver_cfg.maxiter_PF == solver_cfg.maxiter_PF
+    assert restored_solver_cfg.maxiter_inner == solver_cfg.maxiter_inner
 
 
 def test_solve_one_load_step_gradients_with_structured_inputs(monkeypatch):
@@ -121,7 +132,7 @@ def test_solve_one_load_step_gradients_with_structured_inputs(monkeypatch):
         tolerance_inner=1e-6,
     )
 
-    def loss_fn(material_params, load_conditions, state_variables):
+    def loss_fn(material_params, load_conditions, state_variables, solver_cfg):
         d_new, epsilon_new = solve_one_load_step(
             x0,
             material_params,
@@ -134,7 +145,7 @@ def test_solve_one_load_step_gradients_with_structured_inputs(monkeypatch):
     material_bar, load_bar, state_bar = jax.grad(
         loss_fn,
         argnums=(0, 1, 2),
-    )(material_params, load_conditions, state_variables)
+    )(material_params, load_conditions, state_variables, solver_cfg)
 
     num_cells = 2.0
     np.testing.assert_allclose(material_bar.lmbda, 6.0 * jnp.ones((2, 1, 1)))

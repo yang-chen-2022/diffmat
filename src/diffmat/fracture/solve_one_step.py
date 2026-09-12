@@ -70,7 +70,8 @@ class StateVariables:
         return cls(*children)
 
 
-@dataclass(frozen=True, eq=False)
+@jax.tree_util.register_pytree_node_class
+@dataclass(frozen=True)
 class SolverConfig:
     grid: Any
     maxiter_PF: int
@@ -78,6 +79,21 @@ class SolverConfig:
     maxiter_inner: int
     tolerance_inner: float
     verbose: int = 0
+
+    def tree_flatten(self):
+        return (), (
+            self.grid,
+            self.maxiter_PF,
+            self.maxiter_Elas,
+            self.maxiter_inner,
+            self.tolerance_inner,
+            self.verbose,
+        )
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        del children
+        return cls(*aux_data)
 
 
 
@@ -293,10 +309,7 @@ def residual(
     )
 
 
-@functools.partial(
-    jax.custom_vjp,
-    nondiff_argnums=(4,),
-)
+@jax.custom_vjp
 def solve_one_load_step(
     x0,
     material_params: MaterialParams,
@@ -333,15 +346,15 @@ def solve_fwd(
         material_params,
         load_conditions,
         state_variables,
+        solver_cfg,
     )
 
 def solve_bwd(
-    solver_cfg: SolverConfig,
     residuals,
     g,
 ):
 
-    x_star, material_params, load_conditions, state_variables = residuals
+    x_star, material_params, load_conditions, state_variables, solver_cfg = residuals
 
     def JT_lambda(v):
 
@@ -404,6 +417,7 @@ def solve_bwd(
         material_bar,
         load_bar,
         state_bar,
+        None,
     )
 
 solve_one_load_step.defvjp(
