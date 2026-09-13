@@ -193,20 +193,6 @@ def inner_fixed_point(
     state_variables: StateVariables,
     solver_cfg: SolverConfig,
 ):
-    (
-        grid,
-        lmbda0,
-        mu0,
-        k_stab,
-        maxiter_PF,
-        maxiter_Elas,
-        maxiter_inner,
-        tolerance_inner,
-        phase_field_tolerance,
-        elasticity_tolerance,
-        AA_depth,
-        verbose,
-    ) = solver_cfg
 
     def cond_fn(state):
 
@@ -271,9 +257,9 @@ def inner_fixed_point(
         )
 
         converged = (
-            strain_change < tol_inner
+            strain_change < solver_cfg.tol_inner
         ) & (
-            damage_change < tol_inner
+            damage_change < solver_cfg.tol_inner
         )
 
         return (

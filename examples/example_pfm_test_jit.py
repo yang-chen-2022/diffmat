@@ -95,8 +95,8 @@ lmbda_grid, mu_grid, gc_grid, lc_grid = init_material(
     jnp.float64,
 )
 
-lmbda0 = jax.lax.stop_gradient(0.5 * (lmbda_grid.max() + lmbda_grid.min()))
-mu0 = jax.lax.stop_gradient(0.5 * (mu_grid.max() + mu_grid.min()))
+lmbda0 = float(0.5 * (lmbda_grid.max() + lmbda_grid.min()))
+mu0 = float(0.5 * (mu_grid.max() + mu_grid.min()))
 
 # Define monotonic uniaxial loading
 if load == "tension":
@@ -146,13 +146,11 @@ solver_cfg = SolverConfig(
     )
 
 t_start = time.time()
-result = solve_loading_history(
+epsMacro, sigMacro, sfield, efield, dfield = solve_loading_history(
     Emean_steps,
     material_params,
     solver_cfg,
 )
-epsMacro, sigMacro, sfield, efield, dfield = result
-
 print(f"TOTAL TIME FOR PFM SOLVE: {(time.time() - t_start):.3f} s")
 
 # ============================================================================
@@ -165,38 +163,33 @@ plt.xlabel(r"Strain")
 plt.ylabel(r"Stress")
 plt.legend()
 plt.grid(True, alpha=0.3)
-plt.show()
+#plt.show()
 
 
 
 #####
 #####
 
-def loss_fn(lmbda,mu,gc,lc,Emean_steps):
-    result = solve_loading_history(
+def loss_fn(lmbda,mu,gc,lc):
+    material_params = MaterialParams(
+            lmbda=lmbda, 
+            mu=mu,
+            gc=gc,
+            lc=lc,
+        )
+    epsMacro, sigMacro, sfield, efield, dfield = solve_loading_history(
         Emean_steps,
-        lmbda,
-        mu,
-        gc,
-        lc,
-        grid,
-        k_stab=1e-6,
-        maxiter_PF=2000,
-        maxiter_Elas=2000,
-        maxiter_inner=30,
-        tolerance_inner=1e-1,
-        AA_depth=4,
+        material_params,
+        solver_cfg,
     )
-    return result
+    
+    data_term = jnp.sum(epsMacro**2 + sigMacro**2)
+    reg_term = jnp.linalg.norm(efield)
+    return data_term + reg_term
 
+jac_fn = jax.jacobian(loss_fn, argnums=[0])
+jitted_jacobian = jax.jit(jac_fn)
 
-jitted_jacobian = jax.jit(jax.jacobian(loss_fn))
-_ = jitted_jacobian(
-        lmbda_grid,
-        mu_grid,
-        gc_grid,
-        lc_grid,
-        Emean_steps,
-    )
+J = jitted_jacobian(lmbda_grid, mu_grid, gc_grid, lc_grid)
 
 
