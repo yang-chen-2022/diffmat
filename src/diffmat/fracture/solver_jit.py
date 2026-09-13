@@ -55,6 +55,8 @@ def solve_loading_history(
         dtype=dtype,
     ) + Emean_steps[0][:, None, None, None]
 
+    depsilon0 = jnp.zeros_like(epsilon0)
+
     lmbda0 = jax.lax.stop_gradient(0.5 * (lmbda.max() + lmbda.min()))
     mu0 = jax.lax.stop_gradient(0.5 * (mu.max() + mu.min()))
 
@@ -78,10 +80,13 @@ def solve_loading_history(
 
     def step_fn(carry, Emean):
 
-        d, epsilon, HH = carry
+        d, epsilon, HH, depsilon = carry
 
         load_conditions = LoadConditions(Emean=Emean)
-        state_variables = StateVariables(HH=HH)
+        state_variables = StateVariables(
+                HH=HH,
+                depsilon=depsilon,
+            )
 
         (
             d,
@@ -107,7 +112,10 @@ def solve_loading_history(
                 mu,
                 epsilon,
             )
-        HH = jnp.maximum(HH, jax.lax.stop_gradient(psi))
+        HH = jax.lax.stop_gradient(jnp.maximum(HH, psi))
+
+        depsilon = epsilon - Emean[:, None, None, None]
+        depsilon = jax.lax.stop_gradient(depsilon)
 
         eps_macro = jnp.mean(epsilon, axis=(1, 2, 3))
         sig_macro = jnp.mean(sigma, axis=(1, 2, 3))
@@ -120,11 +128,11 @@ def solve_loading_history(
             d,
         )
 
-        return (d, epsilon, HH), output
+        return (d, epsilon, HH, depsilon), output
 
     _, outputs = jax.lax.scan(
         step_fn,
-        (d0, epsilon0, HH0),
+        (d0, epsilon0, HH0, depsilon0),
         Emean_steps,
     )
 

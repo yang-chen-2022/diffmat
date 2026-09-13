@@ -35,6 +35,7 @@ from diffmat.fracture.rvegen import (
 from diffmat.commons.utilities import eng2lame, newton_raphson
 from diffmat.commons.io import save_arrays_to_vti
 from diffmat.fracture.solver import solve_fracture_staggered
+from diffmat.fracture.solver_jit import solve_loading_history
 
 from jaxmaterials.common import get_grid_spec
 
@@ -276,6 +277,20 @@ def forward_full_response(
         tolerance_inner=1e-2,
         output_fields=True,
     )
+    _, sigAV, _, efield, dfield = solve_loading_history(
+        strain_loading,
+        lmbda_grid,
+        mu_grid,
+        gc_grid,
+        lc_grid,
+        grid,
+        k_stab=1e-6,
+        maxiter_PF=2000,
+        maxiter_Elas=2000,
+        maxiter_inner=30,
+        tolerance_inner=1e-2,
+        AA_depth=4,
+    )
 
     sigma_macro = sigAV[:, stress_component_idx]  # shape (n_steps,)
 
@@ -501,10 +516,13 @@ if __name__ == "__main__":
     dvc_steps = np.arange(10, nsteps-1, 20)
     nsteps_dvc = len(dvc_steps)
 
-    strain_loading = [
-        jnp.array([eps_xx, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float64)
-        for eps_xx in eps_steps
-    ]
+    strain_loading = jnp.stack(
+        [
+            jnp.array([eps_xx, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float64)
+            for eps_xx in eps_steps
+        ],
+        axis=0,
+    )
 
     print(f"\n3. Generating synthetic reference data (uniaxial tension)...")
     print(f"   Loading: {nsteps} strain steps from {deps} to {Emean}")

@@ -55,9 +55,16 @@ class LoadConditions:
 @dataclass
 class StateVariables:
     HH: jnp.ndarray
+    depsilon: jnp.ndarray
 
     def tree_flatten(self):
-        return ((self.HH,), None)
+        return (
+            (
+                self.HH,
+                self.depsilon,
+            ), 
+            None,
+        )
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
@@ -167,8 +174,6 @@ def staggered_step(
         verbose=solver_cfg.verbose,
     )
 
-    depsilon = epsilon - load_conditions.Emean[:, None, None, None]
-
     epsilon_new, _ = lippmann_schwinger(
         compute_sigma_damaged,
         (
@@ -178,8 +183,7 @@ def staggered_step(
             solver_cfg.k_stab,
         ),
         load_conditions.Emean,
-        #delta_epsilon_initial=depsilon, #TODO:JaxMaterials has an if condition, which causes Tracer issue
-        delta_epsilon_initial=None,
+        delta_epsilon_initial=state_variables.depsilon, 
         ref_params={
             "lambda": solver_cfg.lmbda0,
             "mu": solver_cfg.mu0,

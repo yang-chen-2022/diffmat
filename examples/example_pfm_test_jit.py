@@ -36,7 +36,7 @@ os.makedirs(out_dir, exist_ok=True)
 # Setup: Grid and RVE Geometry
 # ============================================================================
 
-spacing = [0.01, 0.01, 0.01]
+spacing = [0.05, 0.05, 0.05]
 if load == "tension":
     box_size = [1.05, 1.0, spacing[2]]  # physical length, mm
 elif load == "shear":
@@ -132,16 +132,7 @@ result = solve_loading_history(
     tolerance_inner=1e-1,
     AA_depth=4,
 )
-
-# Handle either tuple or dict-style return safely
-if isinstance(result, dict):
-    epsMacro = result.get("epsMacro")
-    sigMacro = result.get("sigMacro")
-    sfield = result.get("sfield")
-    efield = result.get("efield")
-    dfield = result.get("dfield")
-else:
-    epsMacro, sigMacro, sfield, efield, dfield = result
+epsMacro, sigMacro, sfield, efield, dfield = result
 
 print(f"TOTAL TIME FOR PFM SOLVE: {(time.time() - t_start):.3f} s")
 
@@ -156,3 +147,37 @@ plt.ylabel(r"Stress")
 plt.legend()
 plt.grid(True, alpha=0.3)
 plt.show()
+
+
+
+#####
+#####
+
+def loss_fn(lmbda,mu,gc,lc,Emean_steps):
+    result = solve_loading_history(
+        Emean_steps,
+        lmbda,
+        mu,
+        gc,
+        lc,
+        grid,
+        k_stab=1e-6,
+        maxiter_PF=2000,
+        maxiter_Elas=2000,
+        maxiter_inner=30,
+        tolerance_inner=1e-1,
+        AA_depth=4,
+    )
+    return result
+
+
+jitted_jacobian = jax.jit(jax.jacobian(loss_fn))
+_ = jitted_jacobian(
+        lmbda_grid,
+        mu_grid,
+        gc_grid,
+        lc_grid,
+        Emean_steps,
+    )
+
+

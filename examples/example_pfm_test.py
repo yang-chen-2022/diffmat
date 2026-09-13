@@ -39,7 +39,7 @@ os.makedirs(out_dir, exist_ok=True)
 # ============================================================================
 
 # Create a 2D computational grid
-spacing = [0.01, 0.01, 0.01]
+spacing = [0.05, 0.05, 0.05]
 if load=="tension":
     box_size = [1.05, 1.0, spacing[2]] #physical length, mm
 elif load=="shear":
