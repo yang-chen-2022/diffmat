@@ -260,23 +260,23 @@ def forward_full_response(
     tmp_out_dir = "/tmp/pfm_inv_sim"
     os.makedirs(tmp_out_dir, exist_ok=True)
 
-    _, sigAV, _, efield, dfield = solve_fracture_staggered(
-        grid,
-        lmbda_grid,
-        mu_grid,
-        gc_grid,
-        lc_grid,
-        strain_loading,
-        dvc_steps,
-        k_stab=1e-6,
-        maxiter_PF=2000,
-        maxiter_Elas=2000,
-        out_dir=tmp_out_dir,
-        earlystop=None,
-        maxiter_inner=20,
-        tolerance_inner=1e-2,
-        output_fields=True,
-    )
+#    _, sigAV, _, efield, dfield = solve_fracture_staggered(
+#        grid,
+#        lmbda_grid,
+#        mu_grid,
+#        gc_grid,
+#        lc_grid,
+#        strain_loading,
+#        dvc_steps,
+#        k_stab=1e-6,
+#        maxiter_PF=2000,
+#        maxiter_Elas=2000,
+#        out_dir=tmp_out_dir,
+#        earlystop=None,
+#        maxiter_inner=20,
+#        tolerance_inner=1e-2,
+#        output_fields=True,
+#    )
     _, sigAV, _, efield, dfield = solve_loading_history(
         strain_loading,
         lmbda_grid,

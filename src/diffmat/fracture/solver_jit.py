@@ -17,66 +17,30 @@ from functools import partial
 @partial(
     jax.jit,
     static_argnames=(
-        "grid",
-        "k_stab",
-        "maxiter_PF",
-        "maxiter_Elas",
-        "maxiter_inner",
-        "tolerance_inner",
-        "AA_depth",
+        "solver_cfg",
     ),
 )
 def solve_loading_history(
     Emean_steps,
-    lmbda,
-    mu,
-    gc,
-    lc,
-    grid,
-    k_stab=1e-6,
-    maxiter_PF=1000,
-    maxiter_Elas=1000,
-    maxiter_inner=1,
-    tolerance_inner=1e-3,
-    AA_depth=4,
+    material_params: MaterialParams,
+    solver_cfg: SolverConfig,
 ):
 
-    dtype = lmbda.dtype
+    dtype = material_params.lmbda.dtype
 
     d0 = jnp.zeros(
-        (grid.nx, grid.ny, grid.nz),
+        (solver_cfg.grid.nx, solver_cfg.grid.ny, solver_cfg.grid.nz),
         dtype=dtype,
     )
 
     HH0 = jnp.zeros_like(d0)
 
     epsilon0 = jnp.zeros(
-        (6, grid.nx, grid.ny, grid.nz),
+        (6, solver_cfg.grid.nx, solver_cfg.grid.ny, solver_cfg.grid.nz),
         dtype=dtype,
     ) + Emean_steps[0][:, None, None, None]
 
     depsilon0 = jnp.zeros_like(epsilon0)
-
-    lmbda0 = jax.lax.stop_gradient(0.5 * (lmbda.max() + lmbda.min()))
-    mu0 = jax.lax.stop_gradient(0.5 * (mu.max() + mu.min()))
-
-    material_params = MaterialParams(
-        lmbda=lmbda,
-        mu=mu,
-        gc=gc,
-        lc=lc,
-    )
-    solver_cfg = SolverConfig(
-        grid=grid,
-        lmbda0=lmbda0,
-        mu0=mu0,
-        k_stab=k_stab,
-        maxiter_PF=maxiter_PF,
-        maxiter_Elas=maxiter_Elas,
-        maxiter_inner=maxiter_inner,
-        tolerance_inner=tolerance_inner,
-        AA_depth=AA_depth,
-    )
 
     def step_fn(carry, Emean):
 
@@ -104,12 +68,12 @@ def solve_loading_history(
 
         sigma = compute_sigma_damaged(
                 epsilon,
-                (lmbda, mu, d, solver_cfg.k_stab),
+                (material_params.lmbda, material_params.mu, d, solver_cfg.k_stab),
             )
 
         psi = compute_strain_energy(
-                lmbda,
-                mu,
+                material_params.lmbda,
+                material_params.mu,
                 epsilon,
             )
         HH = jax.lax.stop_gradient(jnp.maximum(HH, psi))

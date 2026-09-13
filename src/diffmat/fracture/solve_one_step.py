@@ -1,7 +1,7 @@
 
 import functools
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 import jax
 from jax import numpy as jnp
@@ -70,49 +70,19 @@ class StateVariables:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
 
-
-@jax.tree_util.register_pytree_node_class
-@dataclass(frozen=True, eq=False)
-class SolverConfig:
-    """Static fracture-solver settings carried outside differentiated state."""
-
+class SolverConfig(NamedTuple):
     grid: Any
-    lmbda0: jnp.ndarray
-    mu0: jnp.ndarray
-    k_stab: float
-    maxiter_PF: int
-    maxiter_Elas: int
-    maxiter_inner: int
-    tolerance_inner: float
-    phase_field_tolerance: float = 1e-5
-    elasticity_tolerance: float = 1e-2
+    lmbda0: float
+    mu0: float
+    k_stab: float = 1e-6
+    maxiter_PF: int = 1000
+    maxiter_Elas: int = 1000
+    maxiter_inner: int = 1
+    tol_PF: float = 1e-5
+    tol_Elas: float = 1e-2
+    tol_inner: float = 1e-3
     AA_depth: int = 4
     verbose: int = 0
-
-    def tree_flatten(self):
-        return (
-            (
-                self.lmbda0,
-                self.mu0,
-                self.k_stab,
-            ),
-            (
-            self.grid,
-                self.maxiter_PF,
-                self.maxiter_Elas,
-                self.maxiter_inner,
-                self.tolerance_inner,
-                self.phase_field_tolerance,
-                self.elasticity_tolerance,
-                self.AA_depth,
-                self.verbose,
-            ),
-        )
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(aux_data[0], *children, *aux_data[1:])
-
 
 
 # @jax.jit(static_argnames=["grid", "tolerance", "maxiter"])
@@ -154,6 +124,21 @@ def staggered_step(
     solver_cfg: SolverConfig,
 ):
 
+    (
+        grid,
+        lmbda0,
+        mu0,
+        k_stab,
+        maxiter_PF,
+        maxiter_Elas,
+        maxiter_inner,
+        tol_PF,
+        tol_Elas,
+        tol_inner,
+        AA_depth,
+        verbose,
+    ) = solver_cfg
+
     d, epsilon = x
 
     psi = compute_strain_energy(
@@ -168,10 +153,10 @@ def staggered_step(
         d,
         material_params.gc,
         material_params.lc,
-        solver_cfg.grid,
-        tolerance=solver_cfg.phase_field_tolerance,
-        maxiter=solver_cfg.maxiter_PF,
-        verbose=solver_cfg.verbose,
+        grid,
+        tolerance=tol_PF,
+        maxiter=maxiter_PF,
+        verbose=verbose,
     )
 
     epsilon_new, _ = lippmann_schwinger(
@@ -180,26 +165,25 @@ def staggered_step(
             material_params.lmbda,
             material_params.mu,
             d_new,
-            solver_cfg.k_stab,
+            k_stab,
         ),
         load_conditions.Emean,
         delta_epsilon_initial=state_variables.depsilon, 
         ref_params={
-            "lambda": solver_cfg.lmbda0,
-            "mu": solver_cfg.mu0,
+            "lambda": lmbda0,
+            "mu": mu0,
         },
-        grid_spec=solver_cfg.grid,
-        tol=solver_cfg.elasticity_tolerance,
-        maxits=solver_cfg.maxiter_Elas,
-        verbose=solver_cfg.verbose,
-        depth=solver_cfg.AA_depth,
+        grid_spec=grid,
+        tol=tol_Elas,
+        maxits=maxiter_Elas,
+        verbose=verbose,
+        depth=AA_depth,
     )
 
     return (
         d_new,
         epsilon_new,
     )
-
 
 
 def inner_fixed_point(
@@ -209,12 +193,26 @@ def inner_fixed_point(
     state_variables: StateVariables,
     solver_cfg: SolverConfig,
 ):
+    (
+        grid,
+        lmbda0,
+        mu0,
+        k_stab,
+        maxiter_PF,
+        maxiter_Elas,
+        maxiter_inner,
+        tolerance_inner,
+        phase_field_tolerance,
+        elasticity_tolerance,
+        AA_depth,
+        verbose,
+    ) = solver_cfg
 
     def cond_fn(state):
 
         i, x, converged = state
 
-        return (i < solver_cfg.maxiter_inner) & (~converged)
+        return (i < maxiter_inner) & (~converged)
 
     def body_fn(state):
 
@@ -273,9 +271,9 @@ def inner_fixed_point(
         )
 
         converged = (
-            strain_change < solver_cfg.tolerance_inner
+            strain_change < tol_inner
         ) & (
-            damage_change < solver_cfg.tolerance_inner
+            damage_change < tol_inner
         )
 
         return (
@@ -298,7 +296,7 @@ def inner_fixed_point(
 
     return x_star
 
-@jax.custom_vjp
+@functools.partial(jax.custom_vjp, nondiff_argnums=(4,))
 def solve_one_load_step(
     x0,
     material_params: MaterialParams,
@@ -315,11 +313,11 @@ def solve_one_load_step(
     )
 
 def solve_fwd(
+    solver_cfg: SolverConfig,
     x0,
     material_params: MaterialParams,
     load_conditions: LoadConditions,
     state_variables: StateVariables,
-    solver_cfg: SolverConfig,
 ):
 
     x_star = inner_fixed_point(
@@ -339,6 +337,7 @@ def solve_fwd(
     )
 
 def solve_bwd(
+    solver_cfg,
     residuals,
     g,
 ):
@@ -346,7 +345,6 @@ def solve_bwd(
     x_star, material_params, load_conditions, state_variables, solver_cfg = residuals
 
     def JT_lambda(v):
-
         _, pullback = jax.vjp(
             lambda x: staggered_step(
                 x,
@@ -357,9 +355,7 @@ def solve_bwd(
             ),
             x_star,
         )
-
         JTv = pullback(v)[0]
-
         return jax.tree.map(
             lambda v_, j_:
             v_ - j_,
@@ -370,13 +366,9 @@ def solve_bwd(
     rhs, unravel = ravel_pytree(g)
 
     def linear_operator(vec):
-
         tree = unravel(vec)
-
         out = JT_lambda(tree)
-
         flat, _ = ravel_pytree(out)
-
         return flat
 
     lam_flat, _ = gmres(
@@ -400,13 +392,13 @@ def solve_bwd(
     )
 
     material_bar, load_bar, state_bar = pullback(lam)
+    x0_bar = jax.tree_util.tree_map(jnp.zeros_like, x_star)
 
     return (
-        jax.tree.map(jnp.zeros_like, x_star),
+        x0_bar,
         material_bar,
         load_bar,
         state_bar,
-        None,
     )
 
 solve_one_load_step.defvjp(

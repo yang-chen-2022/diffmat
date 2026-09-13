@@ -13,6 +13,10 @@ from matplotlib import pyplot as plt
 from diffmat.commons.io import save_arrays_to_vti
 from diffmat.fracture.rvegen import init_material
 from diffmat.fracture.solver_jit import solve_loading_history
+from diffmat.fracture.solve_one_step import (
+    MaterialParams,
+    SolverConfig,
+)
 from jaxmaterials.common import get_grid_spec
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
@@ -91,6 +95,9 @@ lmbda_grid, mu_grid, gc_grid, lc_grid = init_material(
     jnp.float64,
 )
 
+lmbda0 = jax.lax.stop_gradient(0.5 * (lmbda_grid.max() + lmbda_grid.min()))
+mu0 = jax.lax.stop_gradient(0.5 * (mu_grid.max() + mu_grid.min()))
+
 # Define monotonic uniaxial loading
 if load == "tension":
     eps1, deps1 = 0.005, 5e-5
@@ -117,20 +124,32 @@ Emean_steps = jnp.stack(
 )
 
 # Solve the phase-field problem using solve_loading_history
+material_params = MaterialParams(
+        lmbda=lmbda_grid, 
+        mu=mu_grid,
+        gc=gc_grid,
+        lc=lc_grid,
+    )
+solver_cfg = SolverConfig(
+        grid=grid,
+        lmbda0=lmbda0,
+        mu0=mu0,
+        k_stab=1e-6,
+        maxiter_PF=1000,
+        maxiter_Elas=1000,
+        maxiter_inner=30,
+        tol_PF=1e-5,
+        tol_Elas=1e-2,
+        tol_inner=1e-3,
+        AA_depth=4,
+        verbose=0,
+    )
+
 t_start = time.time()
 result = solve_loading_history(
     Emean_steps,
-    lmbda_grid,
-    mu_grid,
-    gc_grid,
-    lc_grid,
-    grid,
-    k_stab=1e-6,
-    maxiter_PF=2000,
-    maxiter_Elas=2000,
-    maxiter_inner=30,
-    tolerance_inner=1e-1,
-    AA_depth=4,
+    material_params,
+    solver_cfg,
 )
 epsMacro, sigMacro, sfield, efield, dfield = result
 
