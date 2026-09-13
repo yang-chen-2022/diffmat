@@ -16,6 +16,7 @@ from diffmat.fracture.solver_jit import solve_loading_history
 from diffmat.fracture.solve_one_step import (
     MaterialParams,
     SolverConfig,
+    split_solver_cfg,
 )
 from jaxmaterials.common import get_grid_spec
 

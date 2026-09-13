@@ -84,8 +84,42 @@ class SolverConfig(NamedTuple):
     AA_depth: int = 4
     verbose: int = 0
 
+class InnerLoopConfig(NamedTuple):
+    maxiter_inner: int
+    tol_inner: float
 
-# @jax.jit(static_argnames=["grid", "tolerance", "maxiter"])
+class StaggeredConfig(NamedTuple):
+    grid: object
+    lmbda0: float
+    mu0: float
+    k_stab: float
+    maxiter_PF: int
+    maxiter_Elas: int
+    tol_PF: float
+    tol_Elas: float
+    AA_depth: int
+    verbose: int
+
+def split_solver_cfg(solver_cfg):
+    inner_cfg = InnerLoopConfig(
+        maxiter_inner=int(solver_cfg.maxiter_inner),
+        tol_inner=float(solver_cfg.tol_inner),
+    )
+    staggered_cfg = StaggeredConfig(
+        grid=solver_cfg.grid,
+        lmbda0=float(solver_cfg.lmbda0),
+        mu0=float(solver_cfg.mu0),
+        k_stab=float(solver_cfg.k_stab),
+        maxiter_PF=int(solver_cfg.maxiter_PF),
+        maxiter_Elas=int(solver_cfg.maxiter_Elas),
+        tol_PF=float(solver_cfg.tol_PF),
+        tol_Elas=float(solver_cfg.tol_Elas),
+        AA_depth=int(solver_cfg.AA_depth),
+        verbose=int(solver_cfg.verbose),
+    )
+    return inner_cfg, staggered_cfg
+
+
 def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000, verbose=0):
     """Fixed-point iteration solver for phase-field problem (fracture)
 
@@ -115,13 +149,12 @@ def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000, ver
     return d_final
 
 
-
 def staggered_step(
     x,
     material_params: MaterialParams,
     load_conditions: LoadConditions,
     state_variables: StateVariables,
-    solver_cfg: SolverConfig,
+    staggered_cfg: StaggeredConfig,
 ):
 
     (
@@ -131,13 +164,11 @@ def staggered_step(
         k_stab,
         maxiter_PF,
         maxiter_Elas,
-        maxiter_inner,
         tol_PF,
         tol_Elas,
-        tol_inner,
         AA_depth,
         verbose,
-    ) = solver_cfg
+    ) = staggered_cfg
 
     d, epsilon = x
 
@@ -191,14 +222,15 @@ def inner_fixed_point(
     material_params: MaterialParams,
     load_conditions: LoadConditions,
     state_variables: StateVariables,
-    solver_cfg: SolverConfig,
+    staggered_cfg: StaggeredConfig,
+    inner_cfg: InnerLoopConfig,
 ):
+    maxiter = inner_cfg.maxiter_inner
+    tol = inner_cfg.tol_inner
 
     def cond_fn(state):
-
         i, x, converged = state
-
-        return (i < maxiter_inner) & (~converged)
+        return (i < maxiter) & (~converged)
 
     def body_fn(state):
 
@@ -209,7 +241,7 @@ def inner_fixed_point(
             material_params,
             load_conditions,
             state_variables,
-            solver_cfg,
+            staggered_cfg,
         )
 
         d, epsilon = x
@@ -257,9 +289,9 @@ def inner_fixed_point(
         )
 
         converged = (
-            strain_change < solver_cfg.tol_inner
+            strain_change < tol
         ) & (
-            damage_change < solver_cfg.tol_inner
+            damage_change < tol
         )
 
         return (
@@ -282,24 +314,26 @@ def inner_fixed_point(
 
     return x_star
 
-@functools.partial(jax.custom_vjp, nondiff_argnums=(4,))
+@functools.partial(jax.custom_vjp, nondiff_argnames=("staggered_cfg","inner_cfg"))
 def solve_one_load_step(
     x0,
     material_params: MaterialParams,
     load_conditions: LoadConditions,
     state_variables: StateVariables,
-    solver_cfg: SolverConfig,
+    staggered_cfg: StaggeredConfig,
+    inner_cfg: InnerLoopConfig,
 ):
     return inner_fixed_point(
         x0,
         material_params,
         load_conditions,
         state_variables,
-        solver_cfg,
+        staggered_cfg,
+        inner_cfg,
     )
-
 def solve_fwd(
-    solver_cfg: SolverConfig,
+    staggered_cfg: StaggeredConfig,
+    inner_cfg: InnerLoopConfig,
     x0,
     material_params: MaterialParams,
     load_conditions: LoadConditions,
@@ -311,7 +345,8 @@ def solve_fwd(
         material_params,
         load_conditions,
         state_variables,
-        solver_cfg,
+        staggered_cfg,
+        inner_cfg,
     )
 
     return x_star, (
@@ -319,16 +354,16 @@ def solve_fwd(
         material_params,
         load_conditions,
         state_variables,
-        solver_cfg,
+        staggered_cfg,
     )
 
 def solve_bwd(
-    solver_cfg,
+    staggered_cfg: StaggeredConfig,
+    inner_cfg: InnerLoopConfig,
     residuals,
     g,
 ):
-
-    x_star, material_params, load_conditions, state_variables, solver_cfg = residuals
+    x_star, material_params, load_conditions, state_variables, staggered_cfg = residuals
 
     def JT_lambda(v):
         _, pullback = jax.vjp(
@@ -337,7 +372,7 @@ def solve_bwd(
                 material_params,
                 load_conditions,
                 state_variables,
-                solver_cfg,
+                staggered_cfg,
             ),
             x_star,
         )
@@ -370,7 +405,7 @@ def solve_bwd(
             mp,
             lc,
             sv,
-            solver_cfg,
+            staggered_cfg,
         ),
         material_params,
         load_conditions,

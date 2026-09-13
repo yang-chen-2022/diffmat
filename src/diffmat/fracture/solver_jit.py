@@ -6,6 +6,7 @@ from diffmat.fracture.solve_one_step import (
     MaterialParams,
     SolverConfig,
     StateVariables,
+    split_solver_cfg,
     solve_one_load_step,
 )
 from diffmat.fracture.constitutive import compute_sigma_damaged, compute_strain_energy
@@ -25,6 +26,7 @@ def solve_loading_history(
     material_params: MaterialParams,
     solver_cfg: SolverConfig,
 ):
+    inner_cfg, staggered_cfg = split_solver_cfg(solver_cfg)
 
     dtype = material_params.lmbda.dtype
 
@@ -63,7 +65,8 @@ def solve_loading_history(
             material_params,
             load_conditions,
             state_variables,
-            solver_cfg,
+            staggered_cfg,
+            inner_cfg,
         )
 
         sigma = compute_sigma_damaged(
