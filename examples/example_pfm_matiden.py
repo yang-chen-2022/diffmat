@@ -35,6 +35,7 @@ from diffmat.fracture.rvegen import (
 from diffmat.commons.utilities import eng2lame, newton_raphson
 from diffmat.commons.io import save_arrays_to_vti
 from diffmat.fracture.solver import solve_fracture_staggered
+from diffmat.fracture.solve_one_step import MaterialParams, SolverConfig
 from diffmat.fracture.solver_jit import solve_loading_history
 
 from jaxmaterials.common import get_grid_spec
@@ -42,7 +43,8 @@ from jaxmaterials.common import get_grid_spec
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 jax.config.update("jax_enable_x64", True)
-jax.config.update('jax_platform_name', 'gpu')
+
+jax.config.update("jax_platform_name", "gpu")
 
 
 # ---------- Reparameterization utils for gc and lc ----------
@@ -100,6 +102,13 @@ def coarsen_field_3d(field, coarse_shape):
     """
     if field.ndim == 3:
         fine_shape = field.shape
+
+        if any(coarse_dim <= 0 or coarse_dim > fine_dim
+               for fine_dim, coarse_dim in zip(fine_shape, coarse_shape)):
+            raise ValueError(
+                f"coarse_shape must be positive and no larger than field.shape; "
+                f"got {coarse_shape} for {fine_shape}"
+            )
         
         stride = tuple(
             max(1, fine_dim // coarse_dim)
@@ -204,6 +213,24 @@ def build_rve(box_size, spacing, n_particles, radius_range, seed=42):
     return grid, matID
 
 
+def build_solver_config(grid, lmbda_grid, mu_grid):
+    """Build the static solver configuration from fixed elastic grids."""
+    return SolverConfig(
+        grid=grid,
+        lmbda0=float(0.5 * (lmbda_grid.max() + lmbda_grid.min())),
+        mu0=float(0.5 * (mu_grid.max() + mu_grid.min())),
+        k_stab=1e-6,
+        maxiter_PF=2000,
+        maxiter_Elas=2000,
+        maxiter_inner=30,
+        tol_PF=1e-5,
+        tol_Elas=1e-2,
+        tol_inner=1e-2,
+        AA_depth=4,
+        verbose=0,
+    )
+
+
 def forward_full_response(
     u,
     grid,
@@ -215,6 +242,7 @@ def forward_full_response(
     dvc_resolution=None,
     dvc_steps=None,
     dtype=jnp.float64,
+    solver_cfg=None,
 ):
     """
     Forward model: simulate fracture and return:
@@ -252,73 +280,46 @@ def forward_full_response(
         dtype=dtype,
     )
 
-    strain_dvc = [strain_loading[i] for i in dvc_steps]
-
     n_steps = len(strain_loading)
-    n_steps_dvc = len(dvc_steps)
+    if dvc_steps is None:
+        dvc_steps = np.arange(n_steps)
+    else:
+        dvc_steps = np.asarray(dvc_steps, dtype=int)
+    if np.any(dvc_steps < 0) or np.any(dvc_steps >= n_steps):
+        raise ValueError("dvc_steps must contain valid strain-loading indices")
 
-    tmp_out_dir = "/tmp/pfm_inv_sim"
-    os.makedirs(tmp_out_dir, exist_ok=True)
+    material_params = MaterialParams(
+        lmbda=lmbda_grid,
+        mu=mu_grid,
+        gc=gc_grid,
+        lc=lc_grid,
+    )
+    if solver_cfg is None:
+        solver_cfg = build_solver_config(grid, lmbda_grid, mu_grid)
 
-#    _, sigAV, _, efield, dfield = solve_fracture_staggered(
-#        grid,
-#        lmbda_grid,
-#        mu_grid,
-#        gc_grid,
-#        lc_grid,
-#        strain_loading,
-#        dvc_steps,
-#        k_stab=1e-6,
-#        maxiter_PF=2000,
-#        maxiter_Elas=2000,
-#        out_dir=tmp_out_dir,
-#        earlystop=None,
-#        maxiter_inner=20,
-#        tolerance_inner=1e-2,
-#        output_fields=True,
-#    )
     _, sigAV, _, efield, dfield = solve_loading_history(
         strain_loading,
-        lmbda_grid,
-        mu_grid,
-        gc_grid,
-        lc_grid,
-        grid,
-        k_stab=1e-6,
-        maxiter_PF=2000,
-        maxiter_Elas=2000,
-        maxiter_inner=30,
-        tolerance_inner=1e-2,
-        AA_depth=4,
+        material_params,
+        solver_cfg,
     )
 
     sigma_macro = sigAV[:, stress_component_idx]  # shape (n_steps,)
 
-#    # Coarsen strain and damage fields to experimental resolution if specified
-#    fft_shape = (grid.nx, grid.ny, grid.nz)
-#    if dvc_resolution is not None:
-#        efield_coarse_list = []
-#        dfield_coarse_list = []
-#
-#        for step in range(n_steps_dvc):
-#            eps_coarse = coarsen_field_3d(efield[step], dvc_resolution)
-#            efield_coarse_list.append(eps_coarse)
-#            d_coarse = coarsen_field_3d(dfield[step], dvc_resolution)
-#            dfield_coarse_list.append(d_coarse)
-#        efield_exp = jnp.stack(efield_coarse_list, axis=0) 
-#        dfield_exp = jnp.stack(dfield_coarse_list, axis=0)
-#    else:
-#        efield_exp = efield
-#        dfield_exp = dfield
-    efield_exp = efield
-    dfield_exp = dfield
+    efield_exp = efield[dvc_steps]
+    dfield_exp = dfield[dvc_steps]
+    if dvc_resolution is not None:
+        efield_exp = jnp.stack(
+            [coarsen_field_3d(field, dvc_resolution) for field in efield_exp]
+        )
+        dfield_exp = jnp.stack(
+            [coarsen_field_3d(field, dvc_resolution) for field in dfield_exp]
+        )
 
     return {
         "sigma_macro": sigma_macro,
         "strain_field": efield_exp,
         "damage_field": dfield_exp, 
     }
-
 
 
 def newton_raphson_inverse(
@@ -384,6 +385,7 @@ def newton_raphson_inverse(
     strain_target_norm = jnp.linalg.norm(strain_target_flat)
     sigma_scale = jnp.maximum(sigma_target_norm, 1e-10)
     strain_scale = jnp.maximum(strain_target_norm, 1e-10)
+    solver_cfg = build_solver_config(grid, lmbda_grid, mu_grid)
 
     # Weighted combined residual function
     def residual_fn(p):
@@ -398,6 +400,7 @@ def newton_raphson_inverse(
             dvc_resolution=dvc_resolution,
             dvc_steps=dvc_steps,
             dtype=dtype,
+            solver_cfg=solver_cfg,
         )
 
         sigma_macro = response["sigma_macro"]
@@ -417,10 +420,10 @@ def newton_raphson_inverse(
     u, history = newton_raphson(
         residual_fn,
         u0=u0,
-        maxiter=20,
-        tol=1e-4,
-        reg_init=1e-8,
-        damp_init=1.0,
+        maxiter=maxiter,
+        tol=tol,
+        reg_init=reg,
+        damp_init=damp_init,
         verbose=1,
     )
     return u, history

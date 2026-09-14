@@ -331,6 +331,7 @@ def solve_one_load_step(
         staggered_cfg,
         inner_cfg,
     )
+
 def solve_fwd(
     x0,
     material_params: MaterialParams,
@@ -354,7 +355,6 @@ def solve_fwd(
         material_params,
         load_conditions,
         state_variables,
-        staggered_cfg,
     )
 
 def solve_bwd(
@@ -363,7 +363,7 @@ def solve_bwd(
     residuals,
     g,
 ):
-    x_star, material_params, load_conditions, state_variables, staggered_cfg = residuals
+    x_star, material_params, load_conditions, state_variables = residuals
 
     def JT_lambda(v):
         _, pullback = jax.vjp(

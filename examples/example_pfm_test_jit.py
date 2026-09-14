@@ -4,6 +4,7 @@ Test case for phase-field fracture simulation using `solve_loading_history`.
 
 import os
 import time
+import functools
 
 import jax
 import numpy as np
@@ -170,7 +171,6 @@ plt.grid(True, alpha=0.3)
 
 #####
 #####
-
 def loss_fn(lmbda,mu,gc,lc):
     material_params = MaterialParams(
             lmbda=lmbda, 
@@ -188,9 +188,8 @@ def loss_fn(lmbda,mu,gc,lc):
     reg_term = jnp.linalg.norm(efield)
     return data_term + reg_term
 
-jac_fn = jax.jacobian(loss_fn, argnums=[0])
-jitted_jacobian = jax.jit(jac_fn)
+jac_fn = jax.jacobian(loss_fn, argnums=[0,1,2,3])
 
-J = jitted_jacobian(lmbda_grid, mu_grid, gc_grid, lc_grid)
+J = jac_fn(lmbda_grid, mu_grid, gc_grid, lc_grid)
 
 

@@ -122,7 +122,7 @@ def solve_fwd(b_rhs, a, grid_spec, u_in, tol, maxits, verbose):
         maxits=maxits,
         verbose=verbose,
     )
-    return out, (a, out)
+    return out, (a, out, u_in)
 
 
 def solve_bwd(grid_spec, tol, maxits, verbose, res, gradients):
@@ -138,7 +138,7 @@ def solve_bwd(grid_spec, tol, maxits, verbose, res, gradients):
     :arg gradients: gradient with respect to solution u
     :arg verbose: verbosity level
     """
-    (a, u) = res
+    (a, u, u_in) = res
     g_u = gradients
     b_rhs_ad = -g_u
     Theta = solve(
@@ -152,7 +152,10 @@ def solve_bwd(grid_spec, tol, maxits, verbose, res, gradients):
     )
     g_b_rhs = -Theta
     g_a = Theta * u
-    return g_b_rhs, g_a
+    # u_in is only used as an initial guess for the fixed-point iteration and
+    # does not affect the converged solution, so its cotangent is zero.
+    g_u_in = None if u_in is None else jnp.zeros_like(u_in)
+    return g_b_rhs, g_a, g_u_in
 
 
 solve.defvjp(solve_fwd, solve_bwd)
