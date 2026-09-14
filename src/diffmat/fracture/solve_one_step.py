@@ -332,12 +332,12 @@ def solve_one_load_step(
         inner_cfg,
     )
 def solve_fwd(
-    staggered_cfg: StaggeredConfig,
-    inner_cfg: InnerLoopConfig,
     x0,
     material_params: MaterialParams,
     load_conditions: LoadConditions,
     state_variables: StateVariables,
+    staggered_cfg: StaggeredConfig,
+    inner_cfg: InnerLoopConfig,
 ):
 
     x_star = inner_fixed_point(
