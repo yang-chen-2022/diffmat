@@ -115,8 +115,8 @@ def test_solve_one_load_step_gradients_with_structured_inputs(monkeypatch):
         k_stab=jnp.array(7.0),
         maxiter_PF=1,
         maxiter_Elas=1,
-        maxiter_inner=1,
-        tolerance_inner=1e-6,
+        maxiter_staggered=1,
+        tol_staggered=1e-6,
         AA_depth=3,
     )
 

@@ -7,11 +7,21 @@ import jax
 from jax import numpy as jnp
 from jax.flatten_util import ravel_pytree
 from jax.scipy.sparse.linalg import gmres
+from jaxmaterials.solver import _backend as _lsbackend
 from jaxmaterials.solver.lippmann_schwinger import lippmann_schwinger
 
 from diffmat.fracture.constitutive import compute_sigma_damaged, compute_strain_energy
 from diffmat.fracture.lippmann_schwinger import solve
 from diffmat.fracture.utilities import voigt_to_tensor, tensor_to_voigt
+
+
+def _warn_if_not_converged(label, its, maxits):
+    if its >= maxits:
+        print(f"WARNING: JAX {label} LS solver reached maxits={int(maxits)} without converging")
+
+
+# jaxmaterials raises on non-convergence; resolved at trace time, so patch before any jit.
+_lsbackend._raise_if_not_converged = _warn_if_not_converged
 
 
 @jax.tree_util.register_pytree_node_class
@@ -77,16 +87,16 @@ class SolverConfig(NamedTuple):
     k_stab: float = 1e-6
     maxiter_PF: int = 1000
     maxiter_Elas: int = 1000
-    maxiter_inner: int = 1
+    maxiter_staggered: int = 1
     tol_PF: float = 1e-5
     tol_Elas: float = 1e-2
-    tol_inner: float = 1e-3
+    tol_staggered: float = 1e-3
     AA_depth: int = 4
     verbose: int = 0
 
-class InnerLoopConfig(NamedTuple):
-    maxiter_inner: int
-    tol_inner: float
+class StaggeredLoopConfig(NamedTuple):
+    maxiter_staggered: int
+    tol_staggered: float
 
 class StaggeredConfig(NamedTuple):
     grid: object
@@ -101,9 +111,9 @@ class StaggeredConfig(NamedTuple):
     verbose: int
 
 def split_solver_cfg(solver_cfg):
-    inner_cfg = InnerLoopConfig(
-        maxiter_inner=int(solver_cfg.maxiter_inner),
-        tol_inner=float(solver_cfg.tol_inner),
+    staggered_loop_cfg = StaggeredLoopConfig(
+        maxiter_staggered=int(solver_cfg.maxiter_staggered),
+        tol_staggered=float(solver_cfg.tol_staggered),
     )
     staggered_cfg = StaggeredConfig(
         grid=solver_cfg.grid,
@@ -117,7 +127,7 @@ def split_solver_cfg(solver_cfg):
         AA_depth=int(solver_cfg.AA_depth),
         verbose=int(solver_cfg.verbose),
     )
-    return inner_cfg, staggered_cfg
+    return staggered_loop_cfg, staggered_cfg
 
 
 def phase_field_solve(HH, d_old, gc, lc, grid, tolerance=1e-6, maxiter=1000, verbose=0):
@@ -199,7 +209,7 @@ def staggered_step(
             k_stab,
         ),
         load_conditions.Emean,
-        delta_epsilon_initial=state_variables.depsilon, 
+        delta_epsilon_initial=state_variables.depsilon,
         ref_params={
             "lambda": lmbda0,
             "mu": mu0,
@@ -217,16 +227,16 @@ def staggered_step(
     )
 
 
-def inner_fixed_point(
+def staggered_fixed_point(
     x0,
     material_params: MaterialParams,
     load_conditions: LoadConditions,
     state_variables: StateVariables,
     staggered_cfg: StaggeredConfig,
-    inner_cfg: InnerLoopConfig,
+    staggered_loop_cfg: StaggeredLoopConfig,
 ):
-    maxiter = inner_cfg.maxiter_inner
-    tol = inner_cfg.tol_inner
+    maxiter = staggered_loop_cfg.maxiter_staggered
+    tol = staggered_loop_cfg.tol_staggered
 
     def cond_fn(state):
         i, x, converged = state
@@ -294,6 +304,16 @@ def inner_fixed_point(
             damage_change < tol
         )
 
+        if staggered_cfg.verbose > 0:
+            jax.debug.print(
+                "\033[4m  staggered iter {i:4d}: strain_change={s:.3e} damage_change={d:.3e} converged={c}\033[0m",
+                i=i + 1,
+                s=strain_change,
+                d=damage_change,
+                c=converged,
+                ordered=True,
+            )
+
         return (
             i + 1,
             x_new,
@@ -306,31 +326,41 @@ def inner_fixed_point(
         False,
     )
 
-    _, x_star, _ = jax.lax.while_loop(
+    n_iter, x_star, converged = jax.lax.while_loop(
         cond_fn,
         body_fn,
         state0,
     )
 
-    return x_star
+    return x_star, n_iter, converged
 
-@functools.partial(jax.custom_vjp, nondiff_argnames=("staggered_cfg","inner_cfg"))
-def solve_one_load_step(
+@functools.partial(
+    jax.custom_vjp,
+    nondiff_argnames=("staggered_cfg", "staggered_loop_cfg"),
+)
+def solve_one_load_step_with_info(
     x0,
     material_params: MaterialParams,
     load_conditions: LoadConditions,
     state_variables: StateVariables,
     staggered_cfg: StaggeredConfig,
-    inner_cfg: InnerLoopConfig,
+    staggered_loop_cfg: StaggeredLoopConfig,
 ):
-    return inner_fixed_point(
+    x_star, n_iter, converged = staggered_fixed_point(
         x0,
         material_params,
         load_conditions,
         state_variables,
         staggered_cfg,
-        inner_cfg,
+        staggered_loop_cfg,
     )
+    # Convergence info is integer/boolean, hence non-differentiable.
+    return x_star, (n_iter, converged)
+
+
+def solve_one_load_step(*args, **kwargs):
+    """Differentiable load-step solve returning only the solution (d, epsilon)."""
+    return solve_one_load_step_with_info(*args, **kwargs)[0]
 
 def solve_fwd(
     x0,
@@ -338,19 +368,19 @@ def solve_fwd(
     load_conditions: LoadConditions,
     state_variables: StateVariables,
     staggered_cfg: StaggeredConfig,
-    inner_cfg: InnerLoopConfig,
+    staggered_loop_cfg: StaggeredLoopConfig,
 ):
 
-    x_star = inner_fixed_point(
+    x_star, n_iter, converged = staggered_fixed_point(
         x0,
         material_params,
         load_conditions,
         state_variables,
         staggered_cfg,
-        inner_cfg,
+        staggered_loop_cfg,
     )
 
-    return x_star, (
+    return (x_star, (n_iter, converged)), (
         x_star,
         material_params,
         load_conditions,
@@ -359,11 +389,12 @@ def solve_fwd(
 
 def solve_bwd(
     staggered_cfg: StaggeredConfig,
-    inner_cfg: InnerLoopConfig,
+    staggered_loop_cfg: StaggeredLoopConfig,
     residuals,
     g,
 ):
     x_star, material_params, load_conditions, state_variables = residuals
+    g = g[0]  # cotangents of the convergence info are discarded
 
     def JT_lambda(v):
         _, pullback = jax.vjp(
@@ -422,7 +453,7 @@ def solve_bwd(
         state_bar,
     )
 
-solve_one_load_step.defvjp(
+solve_one_load_step_with_info.defvjp(
     solve_fwd,
     solve_bwd,
 )

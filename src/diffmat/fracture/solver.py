@@ -48,8 +48,8 @@ def solve_fracture_staggered(
     maxiter_Elas=10000,
     out_dir="",
     earlystop=None,
-    maxiter_inner=1,
-    tolerance_inner=1e-5,
+    maxiter_staggered=1,
+    tol_staggered=1e-5,
     load_reduction_factor=None,
     output_fields=False,
 ):
@@ -83,12 +83,12 @@ def solve_fracture_staggered(
     earlystop : float, optional
         Early stopping parameter: stop when stress < earlystop * peak_stress
         after consecutive decreasing steps. If None, run full loading.
-    maxiter_inner : int
-        Max inner loop iterations for staggered scheme (default: 1)
-    tolerance_inner : float
-        Tolerance for inner loop convergence (default: 1e-5)
+    maxiter_staggered : int
+        Max staggered iterations per load step (default: 1)
+    tol_staggered : float
+        Tolerance for staggered iteration convergence (default: 1e-5)
     load_reduction_factor : float, optional
-        Factor for load step subdivision if inner loop doesn't converge
+        Factor for load step subdivision if the staggered iterations don't converge
     output_fields : bool
         If True, returns stress/strain/damage fields at each saved step. If False, returns None.
         (default: False)
@@ -107,14 +107,16 @@ def solve_fracture_staggered(
         Local damage field (n_steps, 1, nx, ny, nz)
     """
 
-    if maxiter_inner < 1:
-        raise ValueError("maxiter_inner must be at least 1")
+    if maxiter_staggered < 1:
+        raise ValueError("maxiter_staggered must be at least 1")
 
     if load_reduction_factor is not None and not 0.0 < load_reduction_factor < 1.0:
         raise ValueError("load_reduction_factor must be between 0 and 1")
 
-    if load_reduction_factor is not None and maxiter_inner < 2:
-        raise ValueError("maxiter_inner must be >= 2 when load step subdivision is active")
+    if load_reduction_factor is not None and maxiter_staggered < 2:
+        raise ValueError(
+            "maxiter_staggered must be >= 2 when load step subdivision is active"
+        )
 
 
     dtype = lmbda.dtype
@@ -170,7 +172,7 @@ def solve_fracture_staggered(
         epsilon_previous = None
         converged = False
 
-        for inner_iteration in range(maxiter_inner):
+        for staggered_iteration in range(maxiter_staggered):
             d = phase_field_solve(
                 HH,
                 d,
@@ -220,7 +222,7 @@ def solve_fracture_staggered(
                 )
                 strain_change = jnp.max(strain_delta_norms / strain_scale)
                 damage_change = jnp.max(jnp.abs(d - d_previous))
-                if bool((strain_change < tolerance_inner) & (damage_change < tolerance_inner)):
+                if bool((strain_change < tol_staggered) & (damage_change < tol_staggered)):
                     converged = True
                     break
 
@@ -228,15 +230,15 @@ def solve_fracture_staggered(
             d_previous = d
 
         print(
-            f"Time Step {step}: completed {inner_iteration + 1} inner iteration(s)"
+            f"Time Step {step}: completed {staggered_iteration + 1} staggered iteration(s)"
         )
 
         if not converged and load_reduction_factor is not None:
             load_increment = E_mean - previous_load
             if bool(jnp.linalg.norm(load_increment) <= 1e-12): #TODO: parameterise this: min_load_increment=1e-12
                 raise RuntimeError(
-                    "Fracture statggered solve reached maxiter_inner at the "
-                    "minimum load increment withouth converging"
+                    "Fracture staggered solve reached maxiter_staggered at the "
+                    "minimum load increment without converging"
                 )
 
             reduced_load = previous_load + load_reduction_factor * load_increment
@@ -244,7 +246,7 @@ def solve_fracture_staggered(
             d = d_start
             HH = HH_start
             print(
-                f"Inner loop did not converge at step [step]; "
+                f"Staggered iterations did not converge at step {step}; "
                 f"retrying with load increment factor {load_reduction_factor}"
             )
             continue
@@ -346,5 +348,4 @@ def solve_fracture_staggered(
         damage_array = None
 
     return jnp.array(eps_steps), jnp.array(sig_steps), stress_array, strain_array, damage_array
-
 

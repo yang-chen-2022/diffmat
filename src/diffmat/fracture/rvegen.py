@@ -201,6 +201,116 @@ def voxelise_particles_periodic(grid, positions, radii):
     ).astype(np.uint8)
 
 
+def generate_voids_periodic(grid, particle_mask, void_fraction, mean_diameter, std_diameter=0.0):
+    """
+    Add random periodic spherical voids in the matrix until the void volume
+    fraction (of the whole RVE) reaches `void_fraction` (slightly overshoots).
+    Void voxels inside particles are cut out, so particle shapes stay intact.
+    Diameters ~ normal(mean_diameter, std_diameter), clipped to one voxel.
+
+    Returns
+    -------
+    mask : (nx, ny, nz) bool ndarray
+    """
+    centres = grid.voxel_centers
+    box = np.array([grid.Lx, grid.Ly, grid.Lz])
+    min_diameter = min(grid.Lx / grid.nx, grid.Ly / grid.ny, grid.Lz / grid.nz)
+
+    matrix = ~np.asarray(particle_mask, dtype=bool).ravel()
+    if void_fraction > matrix.mean():
+        raise ValueError("void_fraction exceeds the matrix volume fraction")
+
+    mask = np.zeros(centres.shape[0], dtype=bool)
+    n_voids = 0
+
+    while mask.mean() < void_fraction:
+        diameter = max(np.random.normal(mean_diameter, std_diameter), min_diameter)
+        centre = np.random.uniform(0.0, 1.0, size=3) * box
+        dr = minimum_image(centres - centre, box)
+        mask |= (np.sum(dr**2, axis=1) <= (0.5 * diameter) ** 2) & matrix
+        n_voids += 1
+        if n_voids > 100000:
+            raise RuntimeError("Could not reach the target void fraction")
+
+    return mask.reshape(grid.nx, grid.ny, grid.nz)
+
+
+def generate_brick_mortar_rve(
+        brick_length,
+        brick_width,
+        mortar_thickness,
+        n_rep=(1, 1),
+        voxel_size=None,
+        resolution=None):
+    """
+    2D brick-and-mortar RVE (running bond), voxelised on a regular grid.
+
+    Unit cell (periodic), size Lx = L + t by Ly = 2 (W + t)
+    (bricks = [ ], mortar = blank space, t = mortar thickness):
+         ________    ________ 
+        |________|  |________|
+        |  ________________  |
+        | |      brick     | |
+        | |________________| |
+        |________    ________|
+        |________|  |________|
+
+    Parameters
+    ----------
+    brick_length, brick_width : float
+        L (x direction) and W (y direction) of a full brick.
+    mortar_thickness : float
+        t, mortar thickness between bricks.
+    n_rep : int or (int, int)
+        Number of unit-cell repetitions in x and y.
+    voxel_size : float, optional
+        Voxel edge length. Alternative to `resolution`.
+    resolution : (int, int), optional
+        Total number of voxels (nx, ny). Must be divisible by n_rep.
+        Exactly one of voxel_size / resolution must be given.
+
+    Returns
+    -------
+    matID : (nx, ny) uint8 ndarray
+        0 = mortar, 1 = brick
+    (Lx, Ly) : tuple of float
+        Overall RVE size.
+    """
+    L, W, t = float(brick_length), float(brick_width), float(mortar_thickness)
+    if L <= 0 or W <= 0 or t < 0:
+        raise ValueError("brick_length and brick_width must be > 0, mortar_thickness >= 0")
+    nrx, nry = (n_rep, n_rep) if np.isscalar(n_rep) else n_rep
+    if nrx < 1 or nry < 1:
+        raise ValueError("n_rep must be >= 1")
+    if (voxel_size is None) == (resolution is None):
+        raise ValueError("Specify exactly one of voxel_size or resolution")
+
+    cx, cy = L + t, 2.0 * (W + t)
+    Lx, Ly = nrx * cx, nry * cy
+    if resolution is None:
+        nx, ny = int(round(Lx / voxel_size)), int(round(Ly / voxel_size))
+    else:
+        nx, ny = resolution
+    if nx % nrx or ny % nry:
+        raise ValueError("Resolution must be divisible by n_rep (grid does not match the unit cell)")
+
+    # Voxel centres folded into one unit cell
+    x = (np.arange(nx) + 0.5) * Lx / nx % cx
+    y = (np.arange(ny) + 0.5) * Ly / ny % cy
+    X, Y = np.meshgrid(x, y, indexing="ij")
+
+    # Middle row: brick centred in x, spanning y in [cy/2 - W/2, cy/2 + W/2]
+    mid = (np.abs(X - cx / 2) <= L / 2) & (np.abs(Y - cy / 2) <= W / 2)
+
+    # Edge rows: brick centred at the cell corner (periodic), split into
+    # two half bricks in x and two half-height strips in y.
+    dx = np.minimum(X, cx - X)
+    dy = np.minimum(Y, cy - Y)
+    edge = (dx <= L / 2) & (dy <= W / 2)
+
+    return (mid | edge).astype(np.uint8), (Lx, Ly)
+
+
 
 # ============================================================================
 # Material Properties for Phase-Field Fracture Model
@@ -222,14 +332,12 @@ def init_material(
     gc_grid = jnp.zeros((nx, ny, nz), dtype=dtype)
     lc_grid = jnp.zeros((nx, ny, nz), dtype=dtype)
     
-    num_mats = len(lmbda_list)
-    matids = np.unique(matID)
-    
-    for i in range(num_mats):
-        lmbda_grid = lmbda_grid.at[matID == matids[i]].set(lmbda_list[i])
-        mu_grid = mu_grid.at[matID == matids[i]].set(mu_list[i])
-        gc_grid = gc_grid.at[matID == matids[i]].set(gc_list[i])
-        lc_grid = lc_grid.at[matID == matids[i]].set(lc_list[i])
+    # List index i corresponds to matID value i (0 matrix, 1 particle, 2 void).
+    for i in range(len(lmbda_list)):
+        lmbda_grid = lmbda_grid.at[matID == i].set(lmbda_list[i])
+        mu_grid = mu_grid.at[matID == i].set(mu_list[i])
+        gc_grid = gc_grid.at[matID == i].set(gc_list[i])
+        lc_grid = lc_grid.at[matID == i].set(lc_list[i])
     
     return lmbda_grid, mu_grid, gc_grid, lc_grid
 

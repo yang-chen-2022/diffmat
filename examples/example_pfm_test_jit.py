@@ -139,10 +139,10 @@ solver_cfg = SolverConfig(
         k_stab=1e-6,
         maxiter_PF=1000,
         maxiter_Elas=1000,
-        maxiter_inner=30,
+        maxiter_staggered=30,
         tol_PF=1e-5,
         tol_Elas=1e-2,
-        tol_inner=1e-3,
+        tol_staggered=1e-3,
         AA_depth=4,
         verbose=0,
     )
@@ -152,6 +152,9 @@ epsMacro, sigMacro, sfield, efield, dfield = solve_loading_history(
     Emean_steps,
     material_params,
     solver_cfg,
+    out_dir=out_dir,
+    save_steps=np.linspace(0, len(Emean_steps) - 1, 10, dtype=int),
+    save_unconverged=True,
 )
 print(f"TOTAL TIME FOR PFM SOLVE: {(time.time() - t_start):.3f} s")
 
@@ -165,7 +168,8 @@ plt.xlabel(r"Strain")
 plt.ylabel(r"Stress")
 plt.legend()
 plt.grid(True, alpha=0.3)
-#plt.show()
+plt.savefig(f"{out_dir}/stress_strain_curve.png", dpi=160)
+plt.show()
 
 
 
@@ -191,5 +195,4 @@ def loss_fn(lmbda,mu,gc,lc):
 jac_fn = jax.jacobian(loss_fn, argnums=[0,1,2,3])
 
 J = jac_fn(lmbda_grid, mu_grid, gc_grid, lc_grid)
-
 

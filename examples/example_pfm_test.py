@@ -135,8 +135,8 @@ epsMacro, sigMacro, sfield, efield, dfield = solve_fracture_staggered(
     maxiter_Elas=2000,
     out_dir=out_dir,
     earlystop=0.2,
-    maxiter_inner=30,
-    tolerance_inner=1e-1,
+    maxiter_staggered=30,
+    tol_staggered=1e-1,
     load_reduction_factor=None,
     output_fields=True,
 )
@@ -171,6 +171,5 @@ plt.ylabel(r"Stress ($\sigma_{ij}$)")
 plt.legend()
 plt.grid(True, alpha=0.3)
 plt.show()
-
 
 

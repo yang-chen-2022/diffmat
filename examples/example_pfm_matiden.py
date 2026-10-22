@@ -9,15 +9,6 @@ for particles and matrix from:
   - Reference data (from prior simulation):
     * One measured stress component (e.g., tensile stress σ11 in uniaxial tension)
     * Full-field strain measurement (e.g., from digital image correlation)
-    * Crack geometry / damage field (after image processing)
-
-The inverse solver uses a weighted combination of:
-1. Measured stress component: σ_measured (scalar per step)
-2. Full-field strain: ε_measured (6 components, spatial field)
-3. Damage field: d_measured (spatial field, thresholded from image)
-
-Feature: Experimental measurements have DIFFERENT resolution than FFT simulation.
-Coarsening is applied to match resolutions for comparison.
 """
 
 import jax
@@ -30,6 +21,7 @@ import os
 from diffmat.fracture.rvegen import (
     generate_particles_periodic,
     voxelise_particles_periodic,
+    generate_voids_periodic,
     init_material,
 )
 from diffmat.commons.utilities import eng2lame, newton_raphson
@@ -52,6 +44,9 @@ gc_min = 1e-4  # N/mm
 gc_max = 1e-2  # N/mm
 lc_min = 0.001  # mm
 lc_max = 0.05   # mm
+
+VOID_ID = 2
+VOID_STIFFNESS_RATIO = 1e-9  # void stiffness relative to the matrix
 
 
 def s_to_gc(s):
@@ -195,8 +190,86 @@ def refine_field_3d_to_shape(field, fine_shape):
 
 
 
-def build_rve(box_size, spacing, n_particles, radius_range, seed=42):
-    """Generate periodic particle RVE and voxelize it."""
+def plot_microstructure(matID, box_size, save_path=None):
+    """Plot a mid-plane slice of the voxelised microstructure (matID)."""
+    mid_k = matID.shape[2] // 2
+    slice_2d = np.asarray(matID[:, :, mid_k]).T
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(
+        slice_2d,
+        origin="lower",
+        extent=[0, box_size[0], 0, box_size[1]],
+        cmap="viridis",
+        interpolation="nearest",
+    )
+    ax.set_xlabel("x (mm)")
+    ax.set_ylabel("y (mm)")
+    ax.set_title("Initial microstructure (matID, mid-plane slice)")
+    fig.colorbar(im, ax=ax, label="Material ID (0=matrix, 1=particle)")
+    fig.tight_layout()
+    if save_path is not None:
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+        print(f"   Saved: {save_path}")
+    plt.show()
+
+
+def plot_strain_maps(strain_field, dvc_steps, eps_steps, box_size, save_path=None, step_indices=None):
+    """
+    Plot mid-plane slices of the full-field strain data at selected DVC steps.
+
+    strain_field: array, shape (n_steps_dvc, 6, nx, ny, nz)
+    dvc_steps: indices (into eps_steps) at which strain_field was recorded
+    step_indices: which entries of strain_field (0-based, into dvc_steps) to plot;
+                  defaults to first, middle, and last available step
+    """
+    strain_field = np.asarray(strain_field)
+    n_steps_dvc = strain_field.shape[0]
+    if step_indices is None:
+        step_indices = sorted(set([0, n_steps_dvc // 2, n_steps_dvc - 1]))
+
+    component_labels = [r"$\epsilon_{11}$", r"$\epsilon_{22}$", r"$\epsilon_{33}$",
+                         r"$\epsilon_{23}$", r"$\epsilon_{13}$", r"$\epsilon_{12}$"]
+    mid_k = strain_field.shape[-1] // 2
+
+    fig, axs = plt.subplots(len(step_indices), 6, figsize=(3 * 6, 3 * len(step_indices)), squeeze=False)
+    for row, s_idx in enumerate(step_indices):
+        e_load = eps_steps[dvc_steps[s_idx]]
+        for comp in range(6):
+            ax = axs[row, comp]
+            slice_2d = strain_field[s_idx, comp, :, :, mid_k].T
+            im = ax.imshow(
+                slice_2d,
+                origin="lower",
+                extent=[0, box_size[0], 0, box_size[1]],
+                cmap="RdBu_r",
+            )
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            if row == 0:
+                ax.set_title(component_labels[comp])
+            if comp == 0:
+                ax.set_ylabel(f"E11={e_load:.2e}\ny (mm)")
+            ax.set_xlabel("x (mm)")
+
+    fig.suptitle("Full-field strain data (DVC-like) from forward simulation")
+    fig.tight_layout()
+    if save_path is not None:
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+        print(f"   Saved: {save_path}")
+    plt.show()
+
+
+def build_rve(
+    box_size,
+    spacing,
+    n_particles,
+    radius_range,
+    seed=42,
+    void_fraction=0.0,
+    void_diameter_mean=None,
+    void_diameter_std=0.0,
+):
+    """Generate periodic particle RVE (matID: 0 matrix, 1 particle, 2 void in matrix) and voxelize it."""
     np.random.seed(seed)
     grid = get_grid_spec(
         box_size[0],
@@ -210,6 +283,12 @@ def build_rve(box_size, spacing, n_particles, radius_range, seed=42):
     positions, radii = generate_particles_periodic(n_particles, box_size, radius_range)
     matID = voxelise_particles_periodic(grid, positions, radii)
 
+    if void_fraction > 0.0:
+        void_mask = generate_voids_periodic(
+            grid, matID == 1, void_fraction, void_diameter_mean, void_diameter_std
+        )
+        matID[void_mask] = VOID_ID
+
     return grid, matID
 
 
@@ -222,12 +301,12 @@ def build_solver_config(grid, lmbda_grid, mu_grid):
         k_stab=1e-6,
         maxiter_PF=2000,
         maxiter_Elas=2000,
-        maxiter_inner=30,
+        maxiter_staggered=30,
         tol_PF=1e-5,
-        tol_Elas=1e-2,
-        tol_inner=1e-2,
+        tol_Elas=1e-3,
+        tol_staggered=1e-2,
         AA_depth=4,
-        verbose=0,
+        verbose=1,
     )
 
 
@@ -248,7 +327,6 @@ def forward_full_response(
     Forward model: simulate fracture and return:
     - One measured stress component (e.g., σ11 for tensile test)
     - Full-field strain (6 components at all spatial points)
-    - Damage field d (spatial field)
 
     u: [s_gc_matrix, s_gc_particle, s_lc_matrix, s_lc_particle]
     strain_loading: list of macroscopic strain vectors
@@ -273,10 +351,10 @@ def forward_full_response(
 
     _, _, gc_grid, lc_grid = init_material(
         matID,
-        lmbda_list=[0., 0.],
-        mu_list=[0., 0.],   #dummy values for lambda and mu
-        gc_list=[gc_matrix, gc_particle],
-        lc_list=[lc_matrix, lc_particle],
+        lmbda_list=[0., 0., 0.],
+        mu_list=[0., 0., 0.],   #dummy values for lambda and mu
+        gc_list=[gc_matrix, gc_particle, gc_matrix],
+        lc_list=[lc_matrix, lc_particle, lc_matrix],
         dtype=dtype,
     )
 
@@ -297,7 +375,7 @@ def forward_full_response(
     if solver_cfg is None:
         solver_cfg = build_solver_config(grid, lmbda_grid, mu_grid)
 
-    _, sigAV, _, efield, dfield = solve_loading_history(
+    _, sigAV, _, efield, _ = solve_loading_history(
         strain_loading,
         material_params,
         solver_cfg,
@@ -306,31 +384,70 @@ def forward_full_response(
     sigma_macro = sigAV[:, stress_component_idx]  # shape (n_steps,)
 
     efield_exp = efield[dvc_steps]
-    dfield_exp = dfield[dvc_steps]
     if dvc_resolution is not None:
         efield_exp = jnp.stack(
             [coarsen_field_3d(field, dvc_resolution) for field in efield_exp]
-        )
-        dfield_exp = jnp.stack(
-            [coarsen_field_3d(field, dvc_resolution) for field in dfield_exp]
         )
 
     return {
         "sigma_macro": sigma_macro,
         "strain_field": efield_exp,
-        "damage_field": dfield_exp, 
     }
 
 
-def newton_raphson_inverse(
-    sigma_target,
-    strain_target,
-    u0,
+def forward_macro_response(
+    u,
     grid,
     matID,
     lmbda_grid,
     mu_grid,
     strain_loading,
+    stress_component_idx=0,
+    dtype=jnp.float64,
+    solver_cfg=None,
+):
+    """Simulate only the macroscopic stress response for a given parameter vector u."""
+    s_gc_matrix, s_gc_particle, s_lc_matrix, s_lc_particle = u
+    gc_matrix = s_to_gc(s_gc_matrix)
+    gc_particle = s_to_gc(s_gc_particle)
+    lc_matrix = s_to_lc(s_lc_matrix)
+    lc_particle = s_to_lc(s_lc_particle)
+
+    _, _, gc_grid, lc_grid = init_material(
+        matID,
+        lmbda_list=[0., 0., 0.],
+        mu_list=[0., 0., 0.],
+        gc_list=[gc_matrix, gc_particle, gc_matrix],
+        lc_list=[lc_matrix, lc_particle, lc_matrix],
+        dtype=dtype,
+    )
+
+    material_params = MaterialParams(
+        lmbda=lmbda_grid,
+        mu=mu_grid,
+        gc=gc_grid,
+        lc=lc_grid,
+    )
+    if solver_cfg is None:
+        solver_cfg = build_solver_config(grid, lmbda_grid, mu_grid)
+
+    _, sigAV, _, _, _ = solve_loading_history(
+        strain_loading,
+        material_params,
+        solver_cfg,
+    )
+
+    return sigAV[:, stress_component_idx]
+
+def newton_raphson_inverse(
+    sigma_target,
+    strain_target=None,
+    u0=None,
+    grid=None,
+    matID=None,
+    lmbda_grid=None,
+    mu_grid=None,
+    strain_loading=None,
     stress_component_idx=0,
     dvc_resolution=None,
     dvc_steps=None,
@@ -342,53 +459,45 @@ def newton_raphson_inverse(
     damp_init=1.0,
 ):
     """
-    Newton-Raphson loop to solve r(u) = 0 where r combines:
-    - Measured stress residual
-    - Full-field strain residual
+    Newton-Raphson loop to solve r(u) = 0.
 
-    Parameters:
-    -----------
-    sigma_target : array
-        Target stress component at each step, shape (n_steps,)
-    strain_target : array
-        Target full strain, shape (n_steps, 6) or flattened
-    u0 : array
-        Initial guess for [s_gc_matrix, s_gc_particle, s_lc_matrix, s_lc_particle]
-    stress_component_idx : int
-        Which stress component to use (0-5 in Voigt notation)
-    dvc_resolution : tuple, optional
-        Target experimental resolution (nx_exp, ny_exp, nz_exp)
-    dvc_steps : int, optional
-        Strain loading step at which full-field strain/damage were acquired
-    weight_sigma : float
-        Weight for stress in combined residual
-    weight_strain : float
-        Weight for strain in combined residual
-    maxiter : int
-        Maximum iterations
-    tol : float
-        Convergence tolerance
-    reg : float
-        Regularization parameter
-    damp_init : float
-        Initial damping for line search
+    If strain_target is None, the residual uses only the macroscopic stress
+    component and skips all DVC/full-field strain computations.
     """
 
     dtype = jnp.float64
 
     u0 = jnp.asarray(u0, dtype=dtype)
     sigma_target = jnp.asarray(sigma_target, dtype=dtype)
-    strain_target = jnp.asarray(strain_target, dtype=dtype)
-    strain_target_flat = strain_target.reshape(strain_target.shape[0], -1).flatten()
-
     sigma_target_norm = jnp.linalg.norm(sigma_target)
-    strain_target_norm = jnp.linalg.norm(strain_target_flat)
     sigma_scale = jnp.maximum(sigma_target_norm, 1e-10)
-    strain_scale = jnp.maximum(strain_target_norm, 1e-10)
     solver_cfg = build_solver_config(grid, lmbda_grid, mu_grid)
 
-    # Weighted combined residual function
+    if strain_target is not None:
+        strain_target = jnp.asarray(strain_target, dtype=dtype)
+        strain_target_flat = strain_target.reshape(strain_target.shape[0], -1).flatten()
+        strain_target_norm = jnp.linalg.norm(strain_target_flat)
+        strain_scale = jnp.maximum(strain_target_norm, 1e-10)
+    else:
+        strain_target_flat = None
+        strain_scale = None
+
     def residual_fn(p):
+        if strain_target is None or weight_strain == 0.0:
+            sigma_macro = forward_macro_response(
+                p,
+                grid,
+                matID,
+                lmbda_grid,
+                mu_grid,
+                strain_loading,
+                stress_component_idx=stress_component_idx,
+                dtype=dtype,
+                solver_cfg=solver_cfg,
+            )
+            r_sigma = (sigma_macro - sigma_target) / sigma_scale
+            return r_sigma * weight_sigma
+
         response = forward_full_response(
             p,
             grid,
@@ -406,10 +515,7 @@ def newton_raphson_inverse(
         sigma_macro = response["sigma_macro"]
         efield = response["strain_field"]
 
-        # Stress residual
         r_sigma = (sigma_macro - sigma_target) / sigma_scale
-
-        # Strain residual (flatten all components and spatial dimensions)
         r_strain = (efield.reshape(efield.shape[0], -1).flatten() - strain_target_flat) / strain_scale
 
         return jnp.concatenate([
@@ -463,16 +569,29 @@ if __name__ == "__main__":
     print("=" * 70)
 
     # RVE geometry
-    box_size = [0.4, 0.4, 0.01]
-    spacing = [0.01, 0.01, 0.01]
+    box_size = [0.4, 0.4, 0.003]
+    spacing = [0.003, 0.003, 0.003]
     n_particles = 8
     radius_range = [0.05, 0.08]
+    # Spherical voids in the matrix (void_fraction = 0 disables them); lengths in mm
+    void_fraction = 0.02
+    void_diameter_mean = 0.04
+    void_diameter_std = 0.01
     dvc_resolution = [int(L/h/5) for L,h in zip(box_size, spacing)]
     dvc_resolution = [max(1, dim) for dim in dvc_resolution]
 
     print("\n1. Building RVE...")
-    grid, matID = build_rve(box_size, spacing, n_particles, radius_range, seed=42)
+    grid, matID = build_rve(
+        box_size, spacing, n_particles, radius_range, seed=42,
+        void_fraction=void_fraction,
+        void_diameter_mean=void_diameter_mean,
+        void_diameter_std=void_diameter_std,
+    )
     print(f"   Grid: {grid.nx} x {grid.ny} x {grid.nz} voxels")
+    print(f"   Void volume fraction: {float(np.mean(matID == VOID_ID)):.4f}")
+
+    os.makedirs("results/matiden", exist_ok=True)
+    plot_microstructure(matID, box_size, save_path="results/matiden/microstructure.png")
 
     # Known elastic parameters (NMC particle + LPSC matrix)
     E_particle = 175e3  # MPa
@@ -486,10 +605,10 @@ if __name__ == "__main__":
     # Create elastic grids
     lmbda_grid, mu_grid, _, _ = init_material(
         matID,
-        lmbda_list=[lmbda_matrix, lmbda_particle],
-        mu_list=[mu_matrix, mu_particle],
-        gc_list=[0.0, 0.0],
-        lc_list=[1.0, 1.0],
+        lmbda_list=[lmbda_matrix, lmbda_particle, VOID_STIFFNESS_RATIO * lmbda_matrix],
+        mu_list=[mu_matrix, mu_particle, VOID_STIFFNESS_RATIO * mu_matrix],
+        gc_list=[0.0, 0.0, 0.0],
+        lc_list=[1.0, 1.0, 1.0],
         dtype=jnp.float64,
     )
 
@@ -513,7 +632,7 @@ if __name__ == "__main__":
     print(f"   lc_particle = {float(lc_true_particle):.6f} mm")
 
     # Uniaxial tension: strain in x-direction (e11)
-    Emean, deps = 6.2e-4, 5e-5
+    Emean, deps = 0.65e-3, 5e-6
     eps_steps = np.arange(0.0, Emean, deps) + deps
     nsteps = len(eps_steps)
     dvc_steps = np.arange(10, nsteps-1, 20)
@@ -532,40 +651,31 @@ if __name__ == "__main__":
     print(f"   Running forward solve with true parameters...")
 
     t0 = time.time()
-    response_true = forward_full_response(
+    sigma_target = forward_macro_response(
         u_true,
         grid,
         matID,
         lmbda_grid,
         mu_grid,
         strain_loading,
-        stress_component_idx=0,  # σ11 (tensile stress)
-        dvc_resolution=dvc_resolution,
-        dvc_steps=dvc_steps,
+        stress_component_idx=0,
     )
     t_fwd = time.time() - t0
     print(f"   Forward solve took {t_fwd:.2f} s")
 
-    sigma_target = jax.lax.stop_gradient(response_true["sigma_macro"])  # shape (nsteps,)
-    strain_target = jax.lax.stop_gradient(response_true["strain_field"])  # shape (nsteps_dvc, 6)
+    sigma_target = jax.lax.stop_gradient(sigma_target)  # shape (nsteps,)
 
     print(f"   Target stress shape: {sigma_target.shape}")
-    print(f"   Target strain shape: {strain_target.shape}")
     print(f"   Stress range: [{sigma_target.min():.3e}, {sigma_target.max():.3e}] MPa")
-    print(f"   Strain range: [{strain_target.min():.3e}, {strain_target.max():.3e}]")
 
     plt.figure()
     plt.plot(eps_steps, sigma_target, "-*", label="Stress-strain curve")
-    plt.plot(
-        eps_steps[dvc_steps],
-        sigma_target[dvc_steps],
-        "o",
-        label="DVC steps",
-    )
     plt.xlabel(r"E11")
     plt.ylabel(r"S11")
     plt.legend()
     plt.grid(True, alpha=0.3)
+    plt.savefig("results/matiden/stress_strain_curve.png", dpi=300, bbox_inches="tight")
+    print("   Saved: results/matiden/stress_strain_curve.png")
     plt.show()
 
     # Initial guess (perturbed from true values)
@@ -586,26 +696,22 @@ if __name__ == "__main__":
 
     # Run inverse solve
     print(f"\n5. Starting Newton-Raphson inverse solve...")
-    print(f"   Data: Measured stress component (σ11) + Full-field strain")
-    print(f"   Weights: stress={1.0}, strain={0.5}")
-    print(f"   Evaluating on {nsteps_dvc} strain fields from DVC")
+    print(f"   Data: Measured stress component (σ11) only")
+    print(f"   Weight: stress={1.0}")
 
     t0 = time.time()
     u_opt, history = newton_raphson_inverse(
-        sigma_target,
-        strain_target,
-        u0,
-        grid,
-        matID,
-        lmbda_grid,
-        mu_grid,
-        strain_loading,
+        sigma_target=sigma_target,
+        u0=u0,
+        grid=grid,
+        matID=matID,
+        lmbda_grid=lmbda_grid,
+        mu_grid=mu_grid,
+        strain_loading=strain_loading,
         stress_component_idx=0,
-        dvc_resolution=dvc_resolution,
-        dvc_steps=dvc_steps,
         weight_sigma=1.0,
-        weight_strain=0.5,
-        maxiter=10,
+        weight_strain=0.0,
+        maxiter=30,
         tol=1e-4,
         reg=1e-6,
         damp_init=1.0,
@@ -715,9 +821,9 @@ if __name__ == "__main__":
         ax.grid(True, alpha=0.3)
 
         plt.tight_layout()
-        os.makedirs("results/matiden", exist_ok=True)
-        plt.savefig("results/matiden/inv_pfm_convergence.png", dpi=300, bbox_inches="tight")
-        print("   Saved: results/matiden/inv_pfm_convergence.png")
+        os.makedirs(out_dir, exist_ok=True)
+        plt.savefig(f"{out_dir}/inv_pfm_convergence.png", dpi=300, bbox_inches="tight")
+        print(f"   Saved: {out_dir}/inv_pfm_convergence.png")
         plt.show()
 
         # Residual norm history
@@ -728,8 +834,8 @@ if __name__ == "__main__":
         plt.title("Convergence of inverse solve (Phase-Field Fracture)\nData: Measured stress + Full-field strain")
         plt.grid(True, which="both", alpha=0.3)
         plt.tight_layout()
-        plt.savefig("results/matiden/inv_pfm_residual.png", dpi=300, bbox_inches="tight")
-        print("   Saved: results/matiden/inv_pfm_residual.png")
+        plt.savefig(f"{out_dir}/inv_pfm_residual.png", dpi=300, bbox_inches="tight")
+        print(f"   Saved: {out_dir}/inv_pfm_residual.png")
         plt.show()
     else:
         print("   No history recorded for visualization.")
@@ -739,14 +845,3 @@ if __name__ == "__main__":
     print("=" * 70)
     print("\nNotes:")
     print("------")
-    print("• This example uses measured stress (σ11) + full-field strain as data.")
-    print("• Full-field strain can be obtained from DIC (Digital Image Correlation).")
-    print("• Damage field comparison requires:")
-    print("  1. Image processing to threshold crack geometry from experiments")
-    print("  2. Comparison with simulated damage field (d > d_threshold)")
-    print("  3. Additional regularization to prefer sharp cracks (high gradient)")
-    print("• To include damage field, modify forward_full_response() to:")
-    print("  1. Save and read damage field from VTK outputs")
-    print("  2. Downsample to match image resolution")
-    print("  3. Add damage residual to residual_fn with appropriate weight")
-
