@@ -24,7 +24,7 @@ jax.config.update('jax_platform_name', 'gpu')
 
 
 # Output directories
-out_dir = f"results/fracture/forward_2"
+out_dir = f"../results/fracture/forward_2"
 os.makedirs(out_dir, exist_ok=True)
 
 
@@ -77,7 +77,7 @@ save_arrays_to_vti(
 
 # save for AMITEX simulation
 from diffmat.perf2amitex.io import saveMesh2VTK_amitex
-saveMesh2VTK_amitex('results/fracture/amitex/micr/matID.vtk', matID.astype(np.uint8)+1, 'matID', origin=[0,0,0], spacing=spacing)
+saveMesh2VTK_amitex('../results/fracture/amitex/micr/matID.vtk', matID.astype(np.uint8)+1, 'matID', origin=[0,0,0], spacing=spacing)
 
 # Define material properties
 # NMC particle + LPSC matrix [Taghikhani et al. JMPS 2025]

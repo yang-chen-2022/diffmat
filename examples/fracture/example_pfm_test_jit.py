@@ -30,9 +30,9 @@ load = "tension"
 
 # Output directories
 if load == "tension":
-    out_dir = "results/fracture/test_jit/SENT"
+    out_dir = "../results/fracture/test_jit/SENT"
 elif load == "shear":
-    out_dir = "results/fracture/test_jit/SENS"
+    out_dir = "../results/fracture/test_jit/SENS"
 else:
     raise ValueError(f"Unsupported load case: {load}")
 

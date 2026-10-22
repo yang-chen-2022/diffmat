@@ -28,9 +28,9 @@ load = "tension"
 
 # Output directories
 if load=="tension":
-    out_dir = f"results/fracture/test/SENT"
+    out_dir = f"../results/fracture/test/SENT"
 elif load=="shear":
-    out_dir = f"results/fracture/test/SENS"
+    out_dir = f"../results/fracture/test/SENS"
 
 os.makedirs(out_dir, exist_ok=True)
 

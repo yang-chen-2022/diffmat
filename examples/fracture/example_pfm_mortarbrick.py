@@ -33,8 +33,8 @@ print("brick fraction:", matID.mean())
 plt.imshow(matID.T, origin="lower", extent=[0, Lx, 0, Ly], cmap="Oranges")
 plt.xlabel("x"); plt.ylabel("y")
 plt.title("Brick (1) / mortar (0)")
-os.makedirs("results/mortarbrick", exist_ok=True)
-plt.savefig("results/mortarbrick/microstructure.png", dpi=150)
+os.makedirs("../results/mortarbrick", exist_ok=True)
+plt.savefig("../results/mortarbrick/microstructure.png", dpi=150)
 plt.close()
 
 # Properties in MPa, µm; index 0 = mortar, 1 = brick
@@ -95,7 +95,7 @@ for name, (idx, emax, xlabel, ylabel) in loadings.items():
         strain_loading,
         material_params,
         solver_cfg,
-        out_dir=f"results/mortarbrick/{name}",
+        out_dir=f"../results/mortarbrick/{name}",
         save_steps=np.linspace(0, nsteps - 1, 10, dtype=int),
         save_unconverged=True,
     )
@@ -109,7 +109,7 @@ for name, (idx, emax, xlabel, ylabel) in loadings.items():
         sig=np.asarray(sig_macro[:, idx]),
         damage=np.asarray(damage),
     )
-    np.savez(f"results/mortarbrick/{name}.npz", eps=results[name]["eps"],
+    np.savez(f"../results/mortarbrick/{name}.npz", eps=results[name]["eps"],
              sig=results[name]["sig"], damage=results[name]["damage"][-1, :, :, 0])
 
     # Macroscopic stress-strain curves
