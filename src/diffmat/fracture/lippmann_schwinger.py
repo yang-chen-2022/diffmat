@@ -3,6 +3,8 @@ from jax import numpy as jnp
 import numpy as np
 import functools
 
+from jaxmaterials.solver.dfft import fftn3, ifftn3
+
 
 @functools.partial(
     jax.custom_vjp,
@@ -53,7 +55,7 @@ def solve(b_rhs, a, grid_spec, u_in=None, tol=1e-6, maxits=1000, verbose=0):
         chi_k, its, rel_difference = state[1:]
 
         # Compute new phase field with polarisation field
-        u_new = jnp.real(jnp.fft.ifftn(jnp.fft.fftn(chi_k) / (a_ref - laplacian)))
+        u_new = jnp.real(ifftn3(fftn3(chi_k) / (a_ref - laplacian)))
 
         # Update the polarisation field
         chi_new = b_rhs - (a - a_ref) * u_new
